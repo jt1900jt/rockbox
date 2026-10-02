@@ -114,17 +114,19 @@ struct home_item {
     const char *label;
     enum view_kind kind;
     bool rockbox;
+    bool bench;
 };
 
 static const struct home_item home_all[] = {
-    { "PLAYLISTS", V_PLAYLISTS, false },
-    { "ARTISTS", V_ARTISTS, false },
-    { "ALBUMS", V_ALBUMS, false },
-    { "SONGS", V_SONGS, false },
-    { "GENRES", V_GENRES, false },
-    { "COMPOSERS", V_COMPOSERS, false },
-    { "NOW PLAYING", V_NOW_PLAYING, false },
-    { "ROCKBOX", V_HOME, true },
+    { "PLAYLISTS", V_PLAYLISTS, false, false },
+    { "ARTISTS", V_ARTISTS, false, false },
+    { "ALBUMS", V_ALBUMS, false, false },
+    { "SONGS", V_SONGS, false, false },
+    { "GENRES", V_GENRES, false, false },
+    { "COMPOSERS", V_COMPOSERS, false, false },
+    { "NOW PLAYING", V_NOW_PLAYING, false, false },
+    { "BENCHMARK", V_HOME, false, true },
+    { "ROCKBOX", V_HOME, true, false },
 };
 #define HOME_ALL ((int)(sizeof home_all / sizeof home_all[0]))
 
@@ -133,6 +135,8 @@ static int home_items(const struct home_item **out)
     int n = 0;
     for (int i = 0; i < HOME_ALL; i++) {
         if (home_all[i].kind == V_NOW_PLAYING && !playing())
+            continue;
+        if (home_all[i].bench && !shell_bench_available())
             continue;
         out[n++] = &home_all[i];
     }
@@ -167,6 +171,8 @@ static void home_select(void)
     const struct home_item *it = items[stack[0].sel];
     if (it->rockbox)
         enter_rockbox_ui();
+    else if (it->bench)
+        shell_bench_run();
     else
         push_kind(it->kind);
 }
@@ -375,6 +381,7 @@ static void handle(enum action a)
 
 void shell_main(void)
 {
+    shell_boot_tick = current_tick;
     FOR_NB_SCREENS(i)
         viewportmanager_theme_enable(i, false, NULL);
     input_init();

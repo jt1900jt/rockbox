@@ -75,6 +75,11 @@ void draw_letter_overlay(char letter);
 void draw_message(const char *line1, const char *line2);
 void format_duration(char *buf, int len, uint32_t ms);
 
+/* shell_bench.c */
+extern long shell_boot_tick;
+bool shell_bench_available(void);
+void shell_bench_run(void);
+
 /* shell_input.c */
 enum action {
     A_NONE,

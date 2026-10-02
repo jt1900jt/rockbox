@@ -22,6 +22,7 @@ shell/shell_main.c
 shell/shell_views.c
 shell/shell_draw.c
 shell/shell_input.c
+shell/shell_bench.c
 #endif
 menu.c
 menus/menu_common.c
