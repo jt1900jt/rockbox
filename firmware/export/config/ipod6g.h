@@ -69,6 +69,9 @@
 /* define this if you have access to the quickscreen */
 #define HAVE_QUICKSCREEN
 
+/* iPod OS: boot into the shell (apps/shell) instead of the Rockbox root menu */
+#define HAVE_IPODOS_SHELL
+
 /* define this if you would like tagcache to build on this target */
 #define HAVE_TAGCACHE
 

@@ -145,6 +145,9 @@
 #include "sim_tasks.h"
 #endif
 #include "system-sdl.h"
+#ifdef HAVE_IPODOS_SHELL
+#include "shell/shell_main.h"
+#endif
 #define HAVE_ARGV_MAIN
 /* Don't use SDL_main on windows -> no more stdio redirection */
 #if defined(WIN32)
@@ -244,7 +247,11 @@ int main(void)
     /* no calls INIT_ATTR functions after this point anymore!
      * see definition of INIT_ATTR in config.h */
     CHART(">root_menu");
+#ifdef HAVE_IPODOS_SHELL
+    shell_main();
+#else
     root_menu();
+#endif
 }
 
 /* The disk isn't ready at boot, rblogo is stored in bin and erased after boot */
