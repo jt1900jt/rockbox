@@ -23,6 +23,8 @@ shell/shell_views.c
 shell/shell_draw.c
 shell/shell_input.c
 shell/shell_bench.c
+shell/shell_link.c
+shell/link_proto.c
 #endif
 menu.c
 menus/menu_common.c

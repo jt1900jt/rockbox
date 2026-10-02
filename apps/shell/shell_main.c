@@ -115,18 +115,20 @@ struct home_item {
     enum view_kind kind;
     bool rockbox;
     bool bench;
+    bool link;
 };
 
 static const struct home_item home_all[] = {
-    { "PLAYLISTS", V_PLAYLISTS, false, false },
-    { "ARTISTS", V_ARTISTS, false, false },
-    { "ALBUMS", V_ALBUMS, false, false },
-    { "SONGS", V_SONGS, false, false },
-    { "GENRES", V_GENRES, false, false },
-    { "COMPOSERS", V_COMPOSERS, false, false },
-    { "NOW PLAYING", V_NOW_PLAYING, false, false },
-    { "BENCHMARK", V_HOME, false, true },
-    { "ROCKBOX", V_HOME, true, false },
+    { "PLAYLISTS", V_PLAYLISTS, false, false, false },
+    { "ARTISTS", V_ARTISTS, false, false, false },
+    { "ALBUMS", V_ALBUMS, false, false, false },
+    { "SONGS", V_SONGS, false, false, false },
+    { "GENRES", V_GENRES, false, false, false },
+    { "COMPOSERS", V_COMPOSERS, false, false, false },
+    { "NOW PLAYING", V_NOW_PLAYING, false, false, false },
+    { "USB LINK", V_HOME, false, false, true },
+    { "BENCHMARK", V_HOME, false, true, false },
+    { "ROCKBOX", V_HOME, true, false, false },
 };
 #define HOME_ALL ((int)(sizeof home_all / sizeof home_all[0]))
 
@@ -137,6 +139,8 @@ static int home_items(const struct home_item **out)
         if (home_all[i].kind == V_NOW_PLAYING && !playing())
             continue;
         if (home_all[i].bench && !shell_bench_available())
+            continue;
+        if (home_all[i].link && !shell_link_available())
             continue;
         out[n++] = &home_all[i];
     }
@@ -173,6 +177,8 @@ static void home_select(void)
         enter_rockbox_ui();
     else if (it->bench)
         shell_bench_run();
+    else if (it->link)
+        shell_link_run();
     else
         push_kind(it->kind);
 }
@@ -386,6 +392,7 @@ void shell_main(void)
         viewportmanager_theme_enable(i, false, NULL);
     input_init();
     draw_init();
+    shell_link_setup();
 
     int err = db_load();
     if (err != 0) {

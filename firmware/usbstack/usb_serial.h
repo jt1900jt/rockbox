@@ -24,6 +24,12 @@
 
 void usb_serial_send(const unsigned char *data, int length);
 
+/* Stream API (ACM data interface). read is non-blocking and returns bytes copied;
+ * write blocks (yielding) until everything is queued, or returns -1 on disconnect. */
+int usb_serial_read(void *buf, int maxlen);
+int usb_serial_write(const void *data, int length);
+bool usb_serial_connected(void);
+
 extern struct usb_class_driver usb_cdrv_serial;
 
 #endif

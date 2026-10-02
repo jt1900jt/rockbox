@@ -181,28 +181,36 @@ union line_coding_buffer
 
 static union line_coding_buffer line_coding;
 
-/* send_buffer: local ring buffer.
- * transit_buffer: used to store aligned data that will be sent by the USB
- * driver. PP502x needs boost for high speed USB, but still works up to
- * around 100 bytes without boost, we play safe and limit packet size to 32
- * bytes, it doesn't hurt because data can be sent over several transfers.
+/* Data path.
+ *
+ * tx_ring/rx_ring are byte rings with monotonic head/tail counters (used = head - tail).
+ * tx_xfer/rx_xfer are the DMA-able buffers handed to the USB driver.
+ *
+ * Transfer-complete callbacks run in the USB thread and readers/writers in other threads.
+ * Rockbox threads are cooperative on these targets, so no locking is needed as long as
+ * neither side yields mid-update. usb_serial_send() (logf) never blocks.
+ *
+ * PP502x needs boost for high speed USB transfers beyond ~100 bytes, so it keeps the
+ * original 32-byte transfers.
  */
-#define BUFFER_SIZE 512
-#define TRANSIT_BUFFER_SIZE 32
-#define RECV_BUFFER_SIZE 32
-static unsigned char send_buffer[BUFFER_SIZE];
-static unsigned char transit_buffer[TRANSIT_BUFFER_SIZE]
-    USB_DEVBSS_ATTR __attribute__((aligned(4)));
-static unsigned char receive_buffer[512]
-    USB_DEVBSS_ATTR __attribute__((aligned(32)));
+#ifdef CPU_PP
+#define XFER_MAX    32
+#define RX_XFER     512
+#else
+#define XFER_MAX    16384
+#define RX_XFER     16384
+#endif
+#define TX_RING     32768
+#define RX_RING     65536
 
-static void sendout(void);
+static unsigned char tx_ring[TX_RING];
+static unsigned char rx_ring[RX_RING];
+static unsigned char tx_xfer[XFER_MAX] USB_DEVBSS_ATTR __attribute__((aligned(32)));
+static unsigned char rx_xfer[RX_XFER] USB_DEVBSS_ATTR __attribute__((aligned(32)));
 
-static int buffer_start;
-/* The number of bytes to transfer that haven't been given to the USB stack yet */
-static int buffer_length;
-/* The number of bytes to transfer that have been given to the USB stack */
-static int buffer_transitlength;
+static size_t tx_head, tx_tail, tx_inflight;
+static size_t rx_head, rx_tail;
+static bool rx_armed;
 static bool active = false;
 
 static struct usb_class_driver_ep_allocation ep_allocs[3] = {
@@ -319,18 +327,45 @@ static bool usb_serial_control_request(struct usb_ctrlrequest* req, uint8_t* req
     return handled;
 }
 
+static void tx_kick(void)
+{
+    if (!active || tx_inflight)
+        return;
+    size_t used = tx_head - tx_tail;
+    if (!used)
+        return;
+    size_t off = tx_tail % TX_RING;
+    size_t n = MIN(used, TX_RING - off);
+    n = MIN(n, (size_t)XFER_MAX);
+    /* End every transfer with a short packet so the host completes its read
+     * without waiting for a zero-length packet. */
+    size_t mps = usb_drv_port_speed() ? 512 : 64;
+    if (n >= mps && n % mps == 0)
+        n--;
+    memcpy(tx_xfer, &tx_ring[off], n);
+    tx_inflight = n;
+    usb_drv_send_nonblocking(EP_IN, tx_xfer, n);
+}
+
+static void rx_arm(void)
+{
+    if (!active || rx_armed)
+        return;
+    if (RX_RING - (rx_head - rx_tail) < RX_XFER)
+        return; /* resumes from usb_serial_read() once there is room */
+    rx_armed = true;
+    usb_drv_recv_nonblocking(EP_OUT, rx_xfer, RX_XFER);
+}
+
 static int usb_serial_init_connection(void)
 {
-    /* prime rx endpoint */
-    usb_drv_recv_nonblocking(EP_OUT, receive_buffer, RECV_BUFFER_SIZE);
-
-    /* we come here too after a bus reset, so reset some data */
-    buffer_transitlength = 0;
-    if(buffer_length>0)
-    {
-        sendout();
-    }
-    active=true;
+    /* we come here too after a bus reset */
+    tx_inflight = 0;
+    rx_armed = false;
+    rx_head = rx_tail = 0;
+    active = true;
+    rx_arm();
+    tx_kick();
     return 0;
 }
 
@@ -338,97 +373,105 @@ static int usb_serial_init_connection(void)
 static void usb_serial_init(void)
 {
     logf("serial: init");
-    buffer_start = 0;
-    buffer_length = 0;
-    buffer_transitlength = 0;
+    tx_head = tx_tail = tx_inflight = 0;
+    rx_head = rx_tail = 0;
+    rx_armed = false;
 }
 
 static void usb_serial_disconnect(void)
 {
     active = false;
+    rx_armed = false;
+    tx_inflight = 0;
+    tx_tail = tx_head;
 }
 
-static void sendout(void)
+bool usb_serial_connected(void)
 {
-    buffer_transitlength = MIN(buffer_length,BUFFER_SIZE-buffer_start);
-    if(buffer_transitlength > 0)
-    {
-        buffer_transitlength = MIN(buffer_transitlength,TRANSIT_BUFFER_SIZE);
-        buffer_length -= buffer_transitlength;
-        memcpy(transit_buffer,&send_buffer[buffer_start],buffer_transitlength);
-        usb_drv_send_nonblocking(EP_IN,transit_buffer,buffer_transitlength);
-    }
+    return active;
 }
 
-void usb_serial_send(const unsigned char *data,int length)
+int usb_serial_read(void *buf, int maxlen)
 {
-    int freestart, available_end_space, i;
+    unsigned char *out = buf;
+    size_t used = rx_head - rx_tail;
+    size_t n = MIN(used, (size_t)(maxlen > 0 ? maxlen : 0));
+    size_t off = rx_tail % RX_RING;
+    size_t first = MIN(n, RX_RING - off);
+    memcpy(out, &rx_ring[off], first);
+    memcpy(out + first, rx_ring, n - first);
+    rx_tail += n;
+    rx_arm();
+    return (int)n;
+}
 
-    if (!active||length<=0)
-        return;
-
-    i=buffer_start+buffer_length+buffer_transitlength;
-    freestart=i%BUFFER_SIZE;
-    available_end_space=BUFFER_SIZE-i;
-
-    if (0>=available_end_space)
+int usb_serial_write(const void *data, int length)
+{
+    const unsigned char *p = data;
+    int left = length;
+    while (left > 0)
     {
-        /* current buffer wraps, so new data can't wrap */
-        int available_space = BUFFER_SIZE -
-            (buffer_length + buffer_transitlength);
-
-        length = MIN(length,available_space);
-        memcpy(&send_buffer[freestart],data,length);
-        buffer_length+=length;
-    }
-    else
-    {
-        /* current buffer doesn't wrap, so new data might */
-        int first_chunk = MIN(length,available_end_space);
-
-        memcpy(&send_buffer[freestart],data,first_chunk);
-        length-=first_chunk;
-        buffer_length+=first_chunk;
-        if(length>0)
+        if (!active)
+            return -1;
+        size_t space = TX_RING - (tx_head - tx_tail);
+        if (!space)
         {
-            /* wrap */
-            memcpy(&send_buffer[0],&data[first_chunk],MIN(length,buffer_start));
-            buffer_length+=MIN(length,buffer_start);
+            tx_kick();
+            yield();
+            continue;
         }
+        size_t off = tx_head % TX_RING;
+        size_t n = MIN(space, TX_RING - off);
+        n = MIN(n, (size_t)left);
+        memcpy(&tx_ring[off], p, n);
+        tx_head += n;
+        p += n;
+        left -= (int)n;
+        tx_kick();
     }
+    return length;
+}
 
-    if (buffer_transitlength==0)
-        sendout();
-    /* else do nothing. The transfer completion handler will pick it up */
+/* Non-blocking; drops what does not fit (logf). */
+void usb_serial_send(const unsigned char *data, int length)
+{
+    if (!active || length <= 0)
+        return;
+    size_t space = TX_RING - (tx_head - tx_tail);
+    size_t n = MIN(space, (size_t)length);
+    size_t off = tx_head % TX_RING;
+    size_t first = MIN(n, TX_RING - off);
+    memcpy(&tx_ring[off], data, first);
+    memcpy(tx_ring, data + first, n - first);
+    tx_head += n;
+    tx_kick();
 }
 
 /* called by usb_core_transfer_complete() */
 static void usb_serial_transfer_complete(int ep,int dir, int status, int length)
 {
     (void)ep;
-    (void)length;
 
     switch (dir) {
         case USB_DIR_OUT:
-            logf("serial: %s", receive_buffer);
-            /* Data received. TODO : Do something with it ? */
-
-            /* Get the next bit */
-            usb_drv_recv_nonblocking(EP_OUT, receive_buffer, RECV_BUFFER_SIZE);
+            rx_armed = false;
+            if (status == 0 && length > 0)
+            {
+                size_t n = MIN((size_t)length, (size_t)RX_XFER);
+                size_t off = rx_head % RX_RING;
+                size_t first = MIN(n, RX_RING - off);
+                memcpy(&rx_ring[off], rx_xfer, first);
+                memcpy(rx_ring, rx_xfer + first, n - first);
+                rx_head += n;
+            }
+            rx_arm();
             break;
 
         case USB_DIR_IN:
-            /* Data sent out. Update circular buffer */
-            if(status == 0)
-            {
-                /* TODO: Handle (length != buffer_transitlength) */
-
-                buffer_start=(buffer_start+buffer_transitlength)%BUFFER_SIZE;
-                buffer_transitlength = 0;
-            }
-
-            if(buffer_length>0)
-                sendout();
+            if (status == 0)
+                tx_tail += tx_inflight;
+            tx_inflight = 0;
+            tx_kick();
             break;
     }
 }

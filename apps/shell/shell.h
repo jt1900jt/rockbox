@@ -80,6 +80,11 @@ extern long shell_boot_tick;
 bool shell_bench_available(void);
 void shell_bench_run(void);
 
+/* shell_link.c */
+void shell_link_setup(void);
+bool shell_link_available(void);
+void shell_link_run(void);
+
 /* shell_input.c */
 enum action {
     A_NONE,

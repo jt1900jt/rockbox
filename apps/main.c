@@ -140,14 +140,15 @@
 #endif
 #endif
 
+#ifdef HAVE_IPODOS_SHELL
+#include "shell/shell_main.h"
+#endif
+
 #if (CONFIG_PLATFORM & PLATFORM_SDL)
 #ifdef SIMULATOR
 #include "sim_tasks.h"
 #endif
 #include "system-sdl.h"
-#ifdef HAVE_IPODOS_SHELL
-#include "shell/shell_main.h"
-#endif
 #define HAVE_ARGV_MAIN
 /* Don't use SDL_main on windows -> no more stdio redirection */
 #if defined(WIN32)

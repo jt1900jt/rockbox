@@ -275,6 +275,10 @@ void usb_set_hid(bool enable);
 #ifdef USB_ENABLE_SERIAL
 void usb_set_serial(bool enable);
 bool usb_get_serial(void);
+/* CDC-ACM stream API, implemented in usbstack/usb_serial.c */
+int usb_serial_read(void *buf, int maxlen);
+int usb_serial_write(const void *data, int length);
+bool usb_serial_connected(void);
 #endif
 
 #if defined(USB_ENABLE_AUDIO) || defined(HAVE_HOST_USB_AUDIO)

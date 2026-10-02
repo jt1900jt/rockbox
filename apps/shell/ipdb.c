@@ -19,9 +19,11 @@ static uint16_t rd16(const uint8_t *p) { uint16_t v; memcpy(&v, p, 2); return v;
 static uint32_t rd32(const uint8_t *p) { uint32_t v; memcpy(&v, p, 4); return v; }
 static uint64_t rd64(const uint8_t *p) { uint64_t v; memcpy(&v, p, 8); return v; }
 
+/* CRC-32 (IEEE), slice-by-8. Chains like zlib: crc32(crc32(0, a), b) == crc32(0, a||b).
+ * Byte loads keep it alignment-agnostic (ARM926 faults on unaligned word loads). */
 uint32_t ipdb_crc32(uint32_t crc, const void *data, size_t len)
 {
-    static uint32_t table[256];
+    static uint32_t t[8][256];
     static int ready;
     const uint8_t *p = data;
     if (!ready) {
@@ -29,13 +31,24 @@ uint32_t ipdb_crc32(uint32_t crc, const void *data, size_t len)
             uint32_t c = i;
             for (int k = 0; k < 8; k++)
                 c = (c & 1) ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-            table[i] = c;
+            t[0][i] = c;
         }
+        for (uint32_t i = 0; i < 256; i++)
+            for (int s = 1; s < 8; s++)
+                t[s][i] = (t[s - 1][i] >> 8) ^ t[0][t[s - 1][i] & 0xFF];
         ready = 1;
     }
     crc = ~crc;
+    while (len >= 8) {
+        uint32_t lo = crc ^ ((uint32_t)p[0] | ((uint32_t)p[1] << 8) | ((uint32_t)p[2] << 16) | ((uint32_t)p[3] << 24));
+        uint32_t hi = (uint32_t)p[4] | ((uint32_t)p[5] << 8) | ((uint32_t)p[6] << 16) | ((uint32_t)p[7] << 24);
+        crc = t[7][lo & 0xFF] ^ t[6][(lo >> 8) & 0xFF] ^ t[5][(lo >> 16) & 0xFF] ^ t[4][lo >> 24] ^
+              t[3][hi & 0xFF] ^ t[2][(hi >> 8) & 0xFF] ^ t[1][(hi >> 16) & 0xFF] ^ t[0][hi >> 24];
+        p += 8;
+        len -= 8;
+    }
     while (len--)
-        crc = table[(crc ^ *p++) & 0xFF] ^ (crc >> 8);
+        crc = t[0][(crc ^ *p++) & 0xFF] ^ (crc >> 8);
     return ~crc;
 }
 
