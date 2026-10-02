@@ -49,6 +49,9 @@
 #define HAVE_QUICKSCREEN
 
 /* define this if you would like tagcache to build on this target */
+/* iPod OS: boot into the shell (apps/shell) instead of the Rockbox root menu */
+#define HAVE_IPODOS_SHELL
+
 #define HAVE_TAGCACHE
 
 /* LCD dimensions */
