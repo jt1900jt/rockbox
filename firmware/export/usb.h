@@ -279,6 +279,15 @@ bool usb_get_serial(void);
 int usb_serial_read(void *buf, int maxlen);
 int usb_serial_write(const void *data, int length);
 bool usb_serial_connected(void);
+struct usb_serial_stats {
+    unsigned long rx_xfers;     /* completed OUT transfers */
+    unsigned long rx_busy_us;   /* time with a transfer armed */
+    unsigned long rx_idle_us;   /* time with the endpoint idle */
+    unsigned long rx_stalls;    /* times the ring was too full to re-arm */
+    unsigned long rx_errors;
+    unsigned long rx_xfer_size;
+};
+void usb_serial_get_stats(struct usb_serial_stats *out);
 #endif
 
 #if defined(USB_ENABLE_AUDIO) || defined(HAVE_HOST_USB_AUDIO)

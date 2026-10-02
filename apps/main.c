@@ -259,6 +259,13 @@ int main(void)
 int show_logo_boot( void ) INIT_ATTR;
 int show_logo_boot( void )
 {
+#ifdef HAVE_IPODOS_SHELL
+    /* iPod OS draws its own boot screen; no Rockbox logo or version. */
+    lcd_set_background(LCD_RGBPACK(11, 11, 12));
+    lcd_clear_display();
+    lcd_update();
+    return 0;
+#else
     unsigned char version[32];
     int font_h, ver_w;
     snprintf(version, sizeof(version), "Ver. %s", rbversion);
@@ -297,6 +304,7 @@ int show_logo_boot( void )
     sleep(HZ); /* sim is too fast to see logo */
 #endif
     return 0;
+#endif /* HAVE_IPODOS_SHELL */
 }
 
 #ifdef HAVE_DIRCACHE

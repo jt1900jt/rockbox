@@ -196,22 +196,41 @@ static union line_coding_buffer line_coding;
 #ifdef CPU_PP
 #define XFER_MAX    32
 #define RX_XFER     512
+#define TX_RING     4096
+#define RX_RING     8192
 #else
-#define XFER_MAX    16384
-#define RX_XFER     16384
+#define XFER_MAX    65536
+#define RX_XFER     65536
+#define TX_RING     (128 * 1024)
+#define RX_RING     (256 * 1024)
 #endif
-#define TX_RING     32768
-#define RX_RING     65536
 
 static unsigned char tx_ring[TX_RING];
 static unsigned char rx_ring[RX_RING];
 static unsigned char tx_xfer[XFER_MAX] USB_DEVBSS_ATTR __attribute__((aligned(32)));
-static unsigned char rx_xfer[RX_XFER] USB_DEVBSS_ATTR __attribute__((aligned(32)));
+/* Two receive buffers: on completion the next transfer is armed into the other one before
+ * the finished buffer is copied out, so the OUT endpoint is never left idle while the USB
+ * thread works. Arming early needs room in the ring for both. */
+static unsigned char rx_xfer_buf[2][RX_XFER] USB_DEVBSS_ATTR __attribute__((aligned(32)));
 
 static size_t tx_head, tx_tail, tx_inflight;
 static size_t rx_head, rx_tail;
+static int rx_cur;
 static bool rx_armed;
 static bool active = false;
+
+/* Diagnostics: how much of the time the OUT endpoint had a transfer armed. */
+static struct usb_serial_stats stats;
+static unsigned long rx_mark;
+
+static unsigned long serial_now_us(void)
+{
+#ifdef USEC_TIMER
+    return USEC_TIMER;
+#else
+    return (unsigned long)current_tick * (1000000 / HZ);
+#endif
+}
 
 static struct usb_class_driver_ep_allocation ep_allocs[3] = {
     {.type = USB_ENDPOINT_XFER_BULK, .dir = DIR_IN, .optional = false, .mps = -1},
@@ -347,14 +366,39 @@ static void tx_kick(void)
     usb_drv_send_nonblocking(EP_IN, tx_xfer, n);
 }
 
+static void rx_start(void)
+{
+    unsigned long now = serial_now_us();
+    stats.rx_idle_us += now - rx_mark;
+    rx_mark = now;
+    rx_armed = true;
+    usb_drv_recv_nonblocking(EP_OUT, rx_xfer_buf[rx_cur], RX_XFER);
+}
+
 static void rx_arm(void)
 {
     if (!active || rx_armed)
         return;
-    if (RX_RING - (rx_head - rx_tail) < RX_XFER)
+    if (RX_RING - (rx_head - rx_tail) < RX_XFER) {
+        stats.rx_stalls++;
         return; /* resumes from usb_serial_read() once there is room */
-    rx_armed = true;
-    usb_drv_recv_nonblocking(EP_OUT, rx_xfer, RX_XFER);
+    }
+    rx_start();
+}
+
+static void rx_copy(const unsigned char *src, size_t n)
+{
+    size_t off = rx_head % RX_RING;
+    size_t first = MIN(n, RX_RING - off);
+    memcpy(&rx_ring[off], src, first);
+    memcpy(rx_ring, src + first, n - first);
+    rx_head += n;
+}
+
+void usb_serial_get_stats(struct usb_serial_stats *out)
+{
+    *out = stats;
+    out->rx_xfer_size = RX_XFER;
 }
 
 static int usb_serial_init_connection(void)
@@ -363,6 +407,9 @@ static int usb_serial_init_connection(void)
     tx_inflight = 0;
     rx_armed = false;
     rx_head = rx_tail = 0;
+    rx_cur = 0;
+    memset(&stats, 0, sizeof stats);
+    rx_mark = serial_now_us();
     active = true;
     rx_arm();
     tx_kick();
@@ -453,19 +500,26 @@ static void usb_serial_transfer_complete(int ep,int dir, int status, int length)
     (void)ep;
 
     switch (dir) {
-        case USB_DIR_OUT:
+        case USB_DIR_OUT: {
+            unsigned long now = serial_now_us();
+            stats.rx_busy_us += now - rx_mark;
+            rx_mark = now;
             rx_armed = false;
-            if (status == 0 && length > 0)
+            int done = rx_cur;
+            size_t n = (status == 0 && length > 0) ? MIN((size_t)length, (size_t)RX_XFER) : 0;
+            stats.rx_xfers++;
+            if (status != 0)
+                stats.rx_errors++;
+            /* Arm the next transfer into the other buffer before copying this one out. */
+            if (active && RX_RING - (rx_head - rx_tail) >= n + RX_XFER)
             {
-                size_t n = MIN((size_t)length, (size_t)RX_XFER);
-                size_t off = rx_head % RX_RING;
-                size_t first = MIN(n, RX_RING - off);
-                memcpy(&rx_ring[off], rx_xfer, first);
-                memcpy(rx_ring, rx_xfer + first, n - first);
-                rx_head += n;
+                rx_cur ^= 1;
+                rx_start();
             }
-            rx_arm();
+            rx_copy(rx_xfer_buf[done], n);
+            rx_arm(); /* no-op when already armed above */
             break;
+        }
 
         case USB_DIR_IN:
             if (status == 0)

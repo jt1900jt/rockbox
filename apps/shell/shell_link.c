@@ -19,7 +19,7 @@
 #include "link_proto.h"
 
 static struct link link;
-static uint8_t rxbuf[16384];
+static uint8_t rxbuf[65536];
 
 static int serial_write(void *ctx, const void *buf, size_t n)
 {
@@ -51,6 +51,12 @@ static void draw(unsigned long rx_rate, unsigned long tx_rate)
     line(68, "sent:     %lu KB  (%lu KB/s)", (unsigned long)(link.st.tx_bytes / 1024), tx_rate);
     line(88, "frames %lu  crc errors %lu", (unsigned long)link.st.frames, (unsigned long)link.st.crc_errors);
     line(102, "resyncs %lu  errors %lu", (unsigned long)link.st.resyncs, (unsigned long)link.st.errors);
+    struct usb_serial_stats us;
+    usb_serial_get_stats(&us);
+    unsigned long tot = us.rx_busy_us + us.rx_idle_us;
+    line(122, "rx %lu KB xfers, endpoint armed %lu%%", us.rx_xfer_size / 1024,
+         tot ? (unsigned long)((unsigned long long)us.rx_busy_us * 100 / tot) : 0);
+    line(136, "rx xfers %lu  stalls %lu  errors %lu", us.rx_xfers, us.rx_stalls, us.rx_errors);
     line(216, "MENU to leave");
     lcd_update();
 }
