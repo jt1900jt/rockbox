@@ -85,6 +85,7 @@ void view_row(const struct view *v, int i, struct row *r)
 {
     memset(r, 0, sizeof *r);
     r->sub = r->subbuf;
+    r->art_id = IPDB_NONE;
 
     if (view_is_tracks(v)) {
         uint32_t tid = view_track_id(v, i);
@@ -98,6 +99,7 @@ void view_row(const struct view *v, int i, struct row *r)
             snprintf(r->subbuf, sizeof r->subbuf, "%s \xc2\xb7 %s", artist, ipdb_str(db, al->title));
         format_duration(r->trail, sizeof r->trail, t->duration_ms);
         r->has_thumb = true;
+        r->art_id = al->art_id;
         r->swatch = al->art_id != IPDB_NONE ? al->colors[0] : 0;
         return;
     }
@@ -114,6 +116,7 @@ void view_row(const struct view *v, int i, struct row *r)
             snprintf(r->subbuf, sizeof r->subbuf, "%s", ipdb_str(db, db->artists[al->artist_id].name));
         }
         r->has_thumb = true;
+        r->art_id = al->art_id;
         r->swatch = al->art_id != IPDB_NONE ? al->colors[0] : 0;
         break;
     }

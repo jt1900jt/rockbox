@@ -14,7 +14,7 @@
 #define SHELL_DB_PATH  SHELL_DIR "/library.ipdb"
 
 /* List geometry shared by navigation and drawing. */
-#define SHELL_LIST_ROWS 6
+#define SHELL_LIST_ROWS 6 /* must match draw_rows_visible() */
 
 /* ---- views ---- */
 
@@ -49,8 +49,20 @@ struct row {
     const char *sub;
     char subbuf[128];
     char trail[16];
-    uint16_t swatch;   /* RGB565 album color for the thumbnail placeholder, 0 = none */
+    uint32_t art_id;   /* IPDB_NONE when the album has no cover */
+    uint16_t swatch;   /* dominant album colour, used while the art loads */
     bool has_thumb;
+};
+
+/* What Now Playing needs from the library for the current track. */
+struct np_info {
+    uint32_t art_id;
+    uint16_t colors[3];
+    uint32_t sample_rate;
+    uint16_t bitrate;
+    uint8_t codec;
+    uint8_t bits;
+    bool lossless;
 };
 
 extern ipdb_db shell_db;
@@ -66,14 +78,19 @@ bool view_child(const struct view *v, int i, struct view *child);
 void view_prepare(struct view *v);        /* called once when a view is pushed */
 
 /* shell_draw.c */
-void draw_init(void);
+int draw_rows_visible(void);
 void draw_status(const char *title, bool can_go_back);
-void draw_home(int sel, const char *const *labels, int n);
-void draw_list(const struct view *v);
-void draw_now_playing(void);
+void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint16_t swatch);
+void draw_list(const struct view *v, bool full);
+void draw_list_rows(const struct view *v, int old_sel, int new_sel);
+void draw_list_header(const struct view *v, const char *title, const char *sub,
+                      uint32_t art_id, uint16_t swatch);
+void draw_now_playing(const struct np_info *np, bool full);
 void draw_letter_overlay(char letter);
 void draw_message(const char *line1, const char *line2);
 void format_duration(char *buf, int len, uint32_t ms);
+/* Fills np from the library for the track currently playing. */
+bool shell_np_info(struct np_info *np);
 
 /* shell_bench.c */
 extern long shell_boot_tick;

@@ -14,6 +14,7 @@
 #define IPDB_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #if defined(__BYTE_ORDER__) && __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
@@ -127,6 +128,17 @@ typedef struct {
 } ipdb_db;
 
 int ipdb_open(ipdb_db *db, const void *buf, size_t len);
+
+/* As ipdb_open, but optionally trusts the stored CRC instead of recomputing it.
+ * The CRC is the largest part of load time on a large library; the structural checks,
+ * which are what make the accessors bounds-safe, always run. Skip it only when the file
+ * is known unchanged since a previous verified load. */
+int ipdb_open_ex(ipdb_db *db, const void *buf, size_t len, bool skip_crc);
+
+/* Header fields readable before validation, for deciding whether to skip the CRC.
+ * Both return 0 if the buffer is too small or the magic is wrong. */
+uint64_t ipdb_peek_generation(const void *buf, size_t len);
+uint32_t ipdb_peek_crc(const void *buf, size_t len);
 const char *ipdb_strerror(int err);
 uint32_t ipdb_crc32(uint32_t crc, const void *data, size_t len);
 

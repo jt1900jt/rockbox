@@ -1,52 +1,265 @@
-/* Phase 1 renderer: Rockbox lcd_* primitives and bitmap fonts. Layout and colors follow
- * the design mockups; phase 3 replaces this with the compositor, AA fonts and real art. */
+/* Screen layout. Geometry follows the design mockups, scaled to the 320x240 panel;
+ * the mockups are drawn at ~2x, so type sizes are set by legibility (10 px floor)
+ * rather than by scaling the artwork down. */
 #include <stdio.h>
 #include <string.h>
 
 #include "audio.h"
-#include "font.h"
-#include "lcd.h"
-#include "playlist.h"
-#include "powermgmt.h"
-#include "rbpaths.h"
 #include "metadata.h"
+#include "playlist.h"
+#include "power.h"
+#include "powermgmt.h"
 #include "string-extra.h"
 
 #include "shell.h"
+#include "shell_art.h"
+#include "shell_gfx.h"
 
-#define STATUS_H   20
-#define LIST_Y     22
+#define STATUS_H   22
+#define LIST_Y     24
 #define ROW_H      36
-#define ROWS       SHELL_LIST_ROWS
 #define THUMB      28
+#define SIDE       10
+#define SCROLL_W   3
 
-#define C_BG       LCD_RGBPACK(11, 11, 12)
-#define C_FG       LCD_RGBPACK(244, 244, 242)
-#define C_SUB      LCD_RGBPACK(156, 156, 154)
-#define C_DIM      LCD_RGBPACK(139, 139, 138)
-#define C_SEL_SUB  LCD_RGBPACK(74, 74, 80)
-#define C_TRACK    LCD_RGBPACK(48, 48, 50)
-#define C_THUMB    LCD_RGBPACK(40, 40, 44)
+/* Now Playing geometry */
+#define NP_ART     116
+#define NP_ART_X   14
+#define NP_ART_Y   30
+#define NP_TEXT_X  (NP_ART_X + NP_ART + 14)
+#define BAR_Y      164
+#define BAR_H      3
 
-static int f_title, f_body, f_small, f_small_bold;
-
-static int load_font(const char *name)
+static int rows_visible(void)
 {
-    char path[MAX_PATH];
-    snprintf(path, sizeof path, FONT_DIR "/%s", name);
-    int id = font_load(path);
-    return id >= 0 ? id : FONT_UI;
+    return (LCD_HEIGHT - LIST_Y) / ROW_H;
 }
 
-void draw_init(void)
+int draw_rows_visible(void)
 {
-    f_title = load_font("12-Adobe-Helvetica-Bold.fnt");
-    f_body = load_font("12-Adobe-Helvetica.fnt");
-    f_small = load_font("10-Adobe-Helvetica.fnt");
-    f_small_bold = load_font("10-Adobe-Helvetica-Bold.fnt");
-    lcd_set_viewport(NULL);
-    lcd_set_backdrop(NULL);
+    return rows_visible();
 }
+
+/* ---- status bar ---- */
+
+void draw_status(const char *title, bool can_go_back)
+{
+    char up[96];
+    gfx_fill(0, 0, LCD_WIDTH, STATUS_H, C_BG);
+    if (can_go_back)
+        gfx_icon_chevron_left(SIDE, (STATUS_H - 10) / 2, C_FG);
+
+    gfx_upper(up, sizeof up, title);
+    int cy = (STATUS_H - gfx_line_height(F_CAPS)) / 2 + gfx_ascent(F_CAPS);
+    gfx_text_center(F_CAPS, LCD_WIDTH / 2, cy, 180, up, C_FG);
+
+    int bx = LCD_WIDTH - SIDE - 20;
+    gfx_icon_battery(bx, (STATUS_H - 9) / 2, battery_level(), charger_inserted(), C_SUB);
+
+    int st = audio_status();
+    if (st & AUDIO_STATUS_PLAY) {
+        int gy = (STATUS_H - 10) / 2;
+        if (st & AUDIO_STATUS_PAUSE)
+            gfx_icon_pause(bx - 14, gy, C_SUB);
+        else
+            gfx_icon_play(bx - 14, gy, C_SUB);
+    }
+}
+
+/* ---- list ---- */
+
+static void draw_thumb(int x, int y, uint32_t art_id, uint16_t swatch)
+{
+    int w, h;
+    const uint16_t *px = art_get(IPAP_THMB, art_id, &w, &h);
+    if (px && w == THUMB && h == THUMB)
+        gfx_blit_round(px, x, y, THUMB, THUMB, 3);
+    else
+        gfx_fill_round(x, y, THUMB, THUMB, 3, swatch ? swatch : C_PLACEHOLD);
+}
+
+static void draw_row(const struct view *v, int i, int y, bool selected)
+{
+    struct row r;
+    view_row(v, i, &r);
+
+    if (selected)
+        gfx_fill_round(SIDE - 4, y + 1, LCD_WIDTH - 2 * SIDE - SCROLL_W + 2, ROW_H - 2, 4, C_SEL_BG);
+    else
+        gfx_fill(0, y, LCD_WIDTH - SCROLL_W - 2, ROW_H, C_BG);
+
+    int x = SIDE;
+    if (r.has_thumb) {
+        draw_thumb(x, y + (ROW_H - THUMB) / 2, r.art_id, r.swatch);
+        x += THUMB + 10;
+    }
+
+    uint16_t fg = selected ? C_SEL_FG : C_FG;
+    uint16_t sub = selected ? C_SEL_SUB : C_SUB;
+    int right = LCD_WIDTH - SIDE - SCROLL_W;
+    int trail_w = r.trail[0] ? gfx_width(F_CAPS, r.trail) + 10 : 0;
+    int text_w = right - trail_w - x;
+
+    if (r.sub && r.sub[0]) {
+        gfx_text_fit(F_ROW, x, y + 16, text_w, r.title, fg);
+        gfx_text_fit(F_SUB, x, y + 29, text_w, r.sub, sub);
+    } else {
+        gfx_text_fit(F_ROW, x, y + (ROW_H + gfx_ascent(F_ROW)) / 2 - 2, text_w, r.title, fg);
+    }
+    if (trail_w)
+        gfx_text_right(F_CAPS, right, y + (ROW_H + gfx_ascent(F_CAPS)) / 2 - 2, r.trail, sub);
+}
+
+static void draw_scrollbar(int count, int top)
+{
+    int rows = rows_visible();
+    int track_y = LIST_Y + 2, track_h = LCD_HEIGHT - LIST_Y - 6;
+    int x = LCD_WIDTH - SCROLL_W - 2;
+    gfx_fill(x, track_y, SCROLL_W, track_h, C_BG);
+    if (count <= rows)
+        return;
+    int th = track_h * rows / count;
+    if (th < 14)
+        th = 14;
+    int ty = track_y + (track_h - th) * top / (count - rows);
+    gfx_fill_round(x, track_y, SCROLL_W, track_h, 1, C_TRACK);
+    gfx_fill_round(x, ty, SCROLL_W, th, 1, C_SUB);
+}
+
+/* Queue the art just outside the viewport so scrolling finds it already resident. */
+static void prefetch_around(const struct view *v, int top, int count)
+{
+    int rows = rows_visible();
+    for (int k = -2; k < rows + 2; k++) {
+        int i = top + k;
+        if (i < 0 || i >= count || (k >= 0 && k < rows))
+            continue;
+        struct row r;
+        view_row(v, i, &r);
+        if (r.has_thumb)
+            art_prefetch(IPAP_THMB, r.art_id);
+    }
+}
+
+void draw_list(const struct view *v, bool full)
+{
+    int count = view_count(v);
+    int rows = rows_visible();
+
+    if (full) {
+        gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+        draw_status(view_title(v), true);
+    }
+
+    if (count == 0) {
+        gfx_fill(0, LIST_Y, LCD_WIDTH, LCD_HEIGHT - LIST_Y, C_BG);
+        gfx_text_center(F_BODY, LCD_WIDTH / 2, LCD_HEIGHT / 2, 280, "Nothing here yet", C_SUB);
+        return;
+    }
+
+    for (int k = 0; k < rows && v->top + k < count; k++)
+        draw_row(v, v->top + k, LIST_Y + k * ROW_H, v->top + k == v->sel);
+
+    /* clear any space below the last row */
+    int used = LIST_Y + MIN(rows, count - v->top) * ROW_H;
+    if (used < LCD_HEIGHT)
+        gfx_fill(0, used, LCD_WIDTH - SCROLL_W - 2, LCD_HEIGHT - used, C_BG);
+
+    draw_scrollbar(count, v->top);
+    prefetch_around(v, v->top, count);
+}
+
+/* Selection moved without scrolling: repaint just the two affected rows.
+ * A full redraw costs ~25 ms; two rows cost ~8 ms. */
+void draw_list_rows(const struct view *v, int old_sel, int new_sel)
+{
+    int count = view_count(v);
+    for (int i = 0; i < 2; i++) {
+        int idx = i ? new_sel : old_sel;
+        if (idx < v->top || idx >= v->top + rows_visible() || idx >= count)
+            continue;
+        draw_row(v, idx, LIST_Y + (idx - v->top) * ROW_H, idx == new_sel);
+    }
+}
+
+/* ---- header list (playlist / album detail) ---- */
+
+void draw_list_header(const struct view *v, const char *title, const char *sub, uint32_t art_id, uint16_t swatch)
+{
+    const int h = 60;
+    gfx_fill(0, STATUS_H, LCD_WIDTH, h, C_BG);
+    int w, ih;
+    const uint16_t *px = art_get(IPAP_HEAD, art_id, &w, &ih);
+    if (px && w == 52 && ih == 52)
+        gfx_blit_round(px, SIDE, STATUS_H + 4, 52, 52, 4);
+    else
+        gfx_fill_round(SIDE, STATUS_H + 4, 52, 52, 4, swatch ? swatch : C_PLACEHOLD);
+
+    int x = SIDE + 52 + 12;
+    gfx_text_fit(F_TITLE, x, STATUS_H + 26, LCD_WIDTH - x - SIDE, title, C_FG);
+    if (sub) {
+        char up[64];
+        gfx_upper(up, sizeof up, sub);
+        gfx_text_fit(F_CAPS, x, STATUS_H + 44, LCD_WIDTH - x - SIDE, up, C_SUB);
+    }
+    gfx_hline(SIDE, STATUS_H + h - 1, LCD_WIDTH - 2 * SIDE, C_HAIRLINE);
+    (void)v;
+}
+
+/* ---- home ---- */
+
+void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint16_t swatch)
+{
+    gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+
+    /* Blurred album art behind the menu, darkened so the labels stay legible. */
+    int bw, bh;
+    const uint16_t *blur = art_get(IPAP_BLUR, art_id, &bw, &bh);
+    if (blur) {
+        gfx_blit_scaled(blur, bw, bh, 0, 0, LCD_WIDTH, LCD_HEIGHT);
+        gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 150);
+        /* extra darkening on the left, under the labels */
+        gfx_scrim(0, 0, LCD_WIDTH / 2, LCD_HEIGHT, 70);
+    } else if (swatch) {
+        gfx_wash(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_WIDTH * 3 / 4, LCD_HEIGHT / 2, LCD_WIDTH, swatch, C_BG);
+        gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 120);
+    }
+
+    draw_status("Music", false);
+
+    int line = 26;
+    int y0 = (LCD_HEIGHT - STATUS_H - n * line) / 2 + STATUS_H;
+    for (int i = 0; i < n; i++) {
+        char up[32];
+        gfx_upper(up, sizeof up, labels[i]);
+        int y = y0 + i * line + gfx_ascent(F_MENU);
+        if (i == sel)
+            gfx_fill(SIDE + 2, y - gfx_ascent(F_MENU) + 5, 5, 5, C_FG);
+        gfx_text(F_MENU, SIDE + 14, y, up, i == sel ? C_FG : C_DIM);
+    }
+
+    /* now-playing card on the right */
+    struct mp3entry *id3 = (audio_status() & AUDIO_STATUS_PLAY) ? audio_current_track() : NULL;
+    if (id3) {
+        const int cx = 196, cy = 44, cw = 110;
+        int w, h;
+        const uint16_t *px = art_get(IPAP_LRGE, art_id, &w, &h);
+        if (px && w >= cw && h >= cw) {
+            /* centre-crop the 116px art to the card */
+            static uint16_t tmp[110 * 110];
+            int off = (w - cw) / 2;
+            for (int r = 0; r < cw; r++)
+                memcpy(&tmp[r * cw], &px[(r + off) * w + off], cw * 2);
+            gfx_blit_round(tmp, cx, cy, cw, cw, 4);
+        } else {
+            gfx_fill_round(cx, cy, cw, cw, 4, swatch ? swatch : C_PLACEHOLD);
+        }
+        gfx_text_fit(F_BODY, cx, cy + cw + 16, cw, id3->title ? id3->title : "", C_FG);
+        gfx_text_fit(F_SUB, cx, cy + cw + 30, cw, id3->artist ? id3->artist : "", C_SUB);
+    }
+}
+
+/* ---- now playing ---- */
 
 void format_duration(char *buf, int len, uint32_t ms)
 {
@@ -58,231 +271,6 @@ void format_duration(char *buf, int len, uint32_t ms)
         snprintf(buf, len, "%lu:%02lu", (unsigned long)(s / 60), (unsigned long)(s % 60));
 }
 
-static int font_h(int font)
-{
-    return font_get(font)->height;
-}
-
-static int text_w(int font, const char *s)
-{
-    int w, h;
-    lcd_setfont(font);
-    lcd_getstringsize((const unsigned char *)s, &w, &h);
-    return w;
-}
-
-/* Truncate at a UTF-8 boundary and append an ellipsis until the text fits. */
-static const char *fit(int font, const char *s, int maxw, char *buf, size_t len)
-{
-    if (maxw <= 0 || text_w(font, s) <= maxw)
-        return s;
-    size_t n = strlen(s);
-    if (n > len - 4)
-        n = len - 4;
-    while (n > 0) {
-        do {
-            n--;
-        } while (n > 0 && ((unsigned char)s[n] & 0xC0) == 0x80);
-        memcpy(buf, s, n);
-        memcpy(buf + n, "\xe2\x80\xa6", 4);
-        if (text_w(font, buf) <= maxw)
-            return buf;
-    }
-    return "\xe2\x80\xa6";
-}
-
-static void text(int font, int x, int y, int maxw, unsigned color, const char *s)
-{
-    char buf[256];
-    const char *t = fit(font, s, maxw, buf, sizeof buf);
-    lcd_setfont(font);
-    lcd_set_drawmode(DRMODE_FG);
-    lcd_set_foreground(color);
-    lcd_putsxy(x, y, (const unsigned char *)t);
-}
-
-static void text_right(int font, int right, int y, unsigned color, const char *s)
-{
-    text(font, right - text_w(font, s), y, 0, color, s);
-}
-
-static void text_center(int font, int cx, int y, int maxw, unsigned color, const char *s)
-{
-    char buf[256];
-    const char *t = fit(font, s, maxw, buf, sizeof buf);
-    text(font, cx - text_w(font, t) / 2, y, 0, color, t);
-}
-
-static void fill(int x, int y, int w, int h, unsigned color)
-{
-    lcd_set_drawmode(DRMODE_SOLID);
-    lcd_set_foreground(color);
-    lcd_fillrect(x, y, w, h);
-}
-
-static void upper_ascii(char *dst, size_t len, const char *src)
-{
-    size_t i = 0;
-    for (; src[i] && i < len - 1; i++)
-        dst[i] = (src[i] >= 'a' && src[i] <= 'z') ? (char)(src[i] - 32) : src[i];
-    dst[i] = 0;
-}
-
-/* State glyph: pause bars while paused (status bar) or while playing (transport button). */
-static void play_glyph(int x, int y, unsigned color, bool transport)
-{
-    int st = audio_status();
-    bool bars = transport ? (st & AUDIO_STATUS_PLAY) && !(st & AUDIO_STATUS_PAUSE)
-                          : (st & AUDIO_STATUS_PAUSE) != 0;
-    lcd_set_drawmode(DRMODE_SOLID);
-    lcd_set_foreground(color);
-    if (bars) {
-        lcd_fillrect(x, y, 2, 8);
-        lcd_fillrect(x + 4, y, 2, 8);
-    } else if (st & AUDIO_STATUS_PLAY) {
-        for (int i = 0; i < 4; i++)
-            lcd_vline(x + i * 2, y + i, y + 7 - i), lcd_vline(x + i * 2 + 1, y + i, y + 7 - i);
-    }
-}
-
-void draw_status(const char *title, bool can_go_back)
-{
-    char up[128];
-    fill(0, 0, LCD_WIDTH, STATUS_H, C_BG);
-    if (can_go_back) {
-        lcd_set_foreground(C_FG);
-        for (int i = 0; i < 2; i++) {
-            lcd_drawline(16 + i, 5, 12 + i, 10);
-            lcd_drawline(12 + i, 10, 16 + i, 15);
-        }
-    }
-    upper_ascii(up, sizeof up, title);
-    text_center(f_small_bold, LCD_WIDTH / 2, (STATUS_H - font_h(f_small_bold)) / 2, 200, C_FG, up);
-
-    /* battery */
-    int lvl = battery_level();
-    int bx = LCD_WIDTH - 28, by = 6;
-    lcd_set_drawmode(DRMODE_SOLID);
-    lcd_set_foreground(C_SUB);
-    lcd_drawrect(bx, by, 16, 9);
-    lcd_fillrect(bx + 16, by + 3, 2, 3);
-    if (lvl > 0)
-        fill(bx + 2, by + 2, (12 * lvl + 99) / 100, 5, C_FG);
-    play_glyph(bx - 14, by, C_FG, false);
-}
-
-static void thumb(int x, int y, uint16_t swatch)
-{
-    /* Phase 1: dominant album color stands in for the art. */
-    fill(x, y, THUMB, THUMB, swatch ? swatch : C_THUMB);
-}
-
-void draw_list(const struct view *v)
-{
-    struct row r;
-    int n = view_count(v);
-    fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    draw_status(view_title(v), true);
-
-    if (n == 0) {
-        text_center(f_body, LCD_WIDTH / 2, LCD_HEIGHT / 2 - 6, 280, C_SUB, "Nothing here yet");
-        lcd_update();
-        return;
-    }
-
-    for (int k = 0; k < ROWS && v->top + k < n; k++) {
-        int i = v->top + k;
-        int y = LIST_Y + k * ROW_H;
-        bool sel = i == v->sel;
-        view_row(v, i, &r);
-        if (sel)
-            fill(6, y, LCD_WIDTH - 14, ROW_H, C_FG);
-        int x = 12;
-        if (r.has_thumb) {
-            thumb(10, y + (ROW_H - THUMB) / 2, r.swatch);
-            x = 10 + THUMB + 8;
-        }
-        int tw = r.trail[0] ? text_w(f_small, r.trail) + 8 : 0;
-        int right = LCD_WIDTH - 16;
-        unsigned fg = sel ? C_BG : C_FG, sub = sel ? C_SEL_SUB : C_SUB;
-        if (r.sub && r.sub[0]) {
-            text(f_title, x, y + 4, right - tw - x, fg, r.title);
-            text(f_small, x, y + 20, right - tw - x, sub, r.sub);
-        } else {
-            text(f_title, x, y + (ROW_H - font_h(f_title)) / 2, right - tw - x, fg, r.title);
-        }
-        if (tw)
-            text_right(f_small, right, y + (ROW_H - font_h(f_small)) / 2, sub, r.trail);
-    }
-
-    /* scrollbar */
-    if (n > ROWS) {
-        int track_h = LCD_HEIGHT - LIST_Y - 6;
-        int th = track_h * ROWS / n;
-        if (th < 12)
-            th = 12;
-        int ty = LIST_Y + 2 + (track_h - th) * v->top / (n - ROWS);
-        fill(LCD_WIDTH - 5, LIST_Y + 2, 2, track_h, C_TRACK);
-        fill(LCD_WIDTH - 5, ty, 2, th, C_SUB);
-    }
-    lcd_update();
-}
-
-static uint16_t now_playing_color(const struct mp3entry *id3, const ipdb_track **out);
-
-void draw_home(int sel, const char *const *labels, int n)
-{
-    fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    draw_status("Music", false);
-
-    for (int i = 0; i < n; i++) {
-        int y = 32 + i * 24;
-        unsigned c = i == sel ? C_FG : C_DIM;
-        if (i == sel)
-            fill(14, y + 6, 5, 5, C_FG);
-        text(f_title, 26, y, 160, c, labels[i]);
-    }
-
-    /* right panel: what's playing, or library size */
-    struct mp3entry *id3 = (audio_status() & AUDIO_STATUS_PLAY) ? audio_current_track() : NULL;
-    if (id3) {
-        const ipdb_track *t;
-        uint16_t color = now_playing_color(id3, &t);
-        fill(196, 36, 110, 110, color ? color : C_THUMB);
-        text(f_body, 196, 154, 116, C_FG, id3->title ? id3->title : "");
-        text(f_small, 196, 170, 116, C_SUB, id3->artist ? id3->artist : "");
-    } else {
-        char buf[48];
-        snprintf(buf, sizeof buf, "%lu songs", (unsigned long)shell_db.n_tracks);
-        text(f_small, 196, 154, 116, C_SUB, buf);
-    }
-    lcd_update();
-}
-
-/* Album color for the playing track, found by path once per track change. */
-static uint16_t now_playing_color(const struct mp3entry *id3, const ipdb_track **out)
-{
-    static char last_path[MAX_PATH];
-    static uint16_t color;
-    static const ipdb_track *track;
-    if (strcmp(last_path, id3->path) != 0) {
-        strlcpy(last_path, id3->path, sizeof last_path);
-        color = 0;
-        track = NULL;
-        for (uint32_t i = 0; i < shell_db.n_tracks; i++) {
-            const ipdb_track *t = &shell_db.tracks[i];
-            if (!strcmp(ipdb_str(&shell_db, t->path), id3->path)) {
-                const ipdb_album *al = &shell_db.albums[t->album_id];
-                color = al->art_id != IPDB_NONE ? al->colors[0] : 0;
-                track = t;
-                break;
-            }
-        }
-    }
-    *out = track;
-    return color;
-}
-
 static const char *codec_name(uint8_t c)
 {
     static const char *const names[] = { "", "MP3", "AAC", "ALAC", "FLAC", "Vorbis", "Opus",
@@ -290,70 +278,115 @@ static const char *codec_name(uint8_t c)
     return c < sizeof names / sizeof names[0] ? names[c] : "";
 }
 
-void draw_now_playing(void)
+/* Repainting only the progress area keeps the per-second tick cheap. */
+static void draw_progress(const struct mp3entry *id3)
 {
-    char buf[64], buf2[16];
-    fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    draw_status("Now Playing", true);
+    char buf[32], buf2[16];
+    unsigned long len = id3->length, el = id3->elapsed;
+    int bar_w = LCD_WIDTH - 2 * NP_ART_X;
 
+    gfx_fill(NP_ART_X, BAR_Y, bar_w, BAR_H, C_TRACK);
+    if (len)
+        gfx_fill(NP_ART_X, BAR_Y, (int)((unsigned long long)bar_w * (el > len ? len : el) / len), BAR_H, C_FG);
+
+    int ty = BAR_Y + BAR_H + 4 + gfx_ascent(F_CAPS);
+    gfx_fill(NP_ART_X, BAR_Y + BAR_H + 3, bar_w, gfx_line_height(F_CAPS) + 2, C_BG);
+    format_duration(buf, sizeof buf, el);
+    gfx_text(F_CAPS, NP_ART_X, ty, buf, C_SUB);
+    format_duration(buf2, sizeof buf2, len > el ? len - el : 0);
+    snprintf(buf, sizeof buf, "-%s", buf2);
+    gfx_text_right(F_CAPS, LCD_WIDTH - NP_ART_X, ty, buf, C_SUB);
+}
+
+void draw_now_playing(const struct np_info *np, bool full)
+{
+    char buf[64];
     struct mp3entry *id3 = audio_current_track();
     if (!id3 || !(audio_status() & AUDIO_STATUS_PLAY)) {
-        text_center(f_body, LCD_WIDTH / 2, LCD_HEIGHT / 2 - 6, 280, C_SUB, "Nothing playing");
-        lcd_update();
+        gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+        draw_status("Now Playing", true);
+        gfx_text_center(F_BODY, LCD_WIDTH / 2, LCD_HEIGHT / 2, 280, "Nothing playing", C_SUB);
         return;
     }
 
-    const ipdb_track *t;
-    uint16_t color = now_playing_color(id3, &t);
-    fill(14, 28, 116, 116, color ? color : C_THUMB);
-
-    const char *title = id3->title ? id3->title : (t ? ipdb_str(&shell_db, t->title) : "");
-    text(f_title, 142, 40, 166, C_FG, title);
-    text(f_body, 142, 58, 166, C_FG, id3->artist ? id3->artist : "");
-    text(f_small, 142, 74, 166, C_SUB, id3->album ? id3->album : "");
-    snprintf(buf, sizeof buf, "%d of %d", playlist_get_display_index(), playlist_amount());
-    text(f_small_bold, 142, 100, 166, C_SUB, buf);
-
-    unsigned long len = id3->length, el = id3->elapsed;
-    int bar = 292;
-    fill(14, 158, bar, 3, C_TRACK);
-    if (len)
-        fill(14, 158, (int)((unsigned long long)bar * (el > len ? len : el) / len), 3, C_FG);
-    format_duration(buf, sizeof buf, el);
-    text(f_small, 14, 165, 0, C_SUB, buf);
-    format_duration(buf2, sizeof buf2, len > el ? len - el : 0);
-    snprintf(buf, sizeof buf, "-%s", buf2);
-    text_right(f_small, 306, 165, C_SUB, buf);
-
-    /* transport state */
-    fill(LCD_WIDTH / 2 - 15, 184, 30, 30, C_FG);
-    play_glyph(LCD_WIDTH / 2 - 3, 195, C_BG, true);
-
-    if (t) {
-        if (t->flags & IPDB_TF_LOSSLESS)
-            snprintf(buf, sizeof buf, "%s \xc2\xb7 %u/%lu", codec_name(t->codec), t->bits,
-                     (unsigned long)(t->sample_rate / 1000));
-        else
-            snprintf(buf, sizeof buf, "%s \xc2\xb7 %u kbps", codec_name(t->codec), t->bitrate_kbps);
-        text_right(f_small_bold, 306, 222, C_SUB, buf);
+    if (!full) {
+        draw_progress(id3);
+        return;
     }
-    lcd_update();
+
+    /* Background: a wash in the album's dominant colour, as in the mockup. */
+    gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+    if (np->colors[0]) {
+        /* A wash centred on the art, plus a cooler accent in the far corner; both fade
+         * to nothing, so they blend rather than ending on an edge. */
+        gfx_wash(0, 0, LCD_WIDTH, LCD_HEIGHT, NP_ART_X + NP_ART / 2, NP_ART_Y + NP_ART / 2,
+                 240, np->colors[0], C_BG);
+        if (np->colors[1])
+            gfx_wash(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_WIDTH + 20, LCD_HEIGHT + 10,
+                     200, np->colors[1], C_BG);
+        gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 110);
+    }
+    draw_status("Now Playing", true);
+
+    int w, h;
+    const uint16_t *px = art_get(IPAP_LRGE, np->art_id, &w, &h);
+    if (px && w == NP_ART && h == NP_ART)
+        gfx_blit_round(px, NP_ART_X, NP_ART_Y, NP_ART, NP_ART, 4);
+    else
+        gfx_fill_round(NP_ART_X, NP_ART_Y, NP_ART, NP_ART, 4, np->colors[0] ? np->colors[0] : C_PLACEHOLD);
+
+    int tw = LCD_WIDTH - NP_TEXT_X - SIDE;
+    gfx_text_fit(F_CAPS, NP_TEXT_X, NP_ART_Y + 12, tw, "NOW PLAYING", C_SUB);
+    gfx_text_fit(F_TITLE, NP_TEXT_X, NP_ART_Y + 38, tw, id3->title ? id3->title : "", C_FG);
+    gfx_text_fit(F_BODY, NP_TEXT_X, NP_ART_Y + 56, tw, id3->artist ? id3->artist : "", C_FG);
+    gfx_text_fit(F_SUB, NP_TEXT_X, NP_ART_Y + 72, tw, id3->album ? id3->album : "", C_SUB);
+
+    snprintf(buf, sizeof buf, "%d of %d", playlist_get_display_index(), playlist_amount());
+    gfx_text(F_CAPS, NP_TEXT_X, NP_ART_Y + 98, buf, C_SUB);
+
+    draw_progress(id3);
+
+    /* transport: a filled circle with the current state, flanked by skip glyphs */
+    int cy = 196, cx = LCD_WIDTH / 2;
+    gfx_fill_round(cx - 15, cy - 15, 30, 30, 15, C_FG);
+    if (audio_status() & AUDIO_STATUS_PAUSE)
+        gfx_icon_play(cx - 4, cy - 5, C_SEL_FG);
+    else
+        gfx_icon_pause(cx - 4, cy - 5, C_SEL_FG);
+    gfx_icon_prev(cx - 52, cy - 5, C_SUB);
+    gfx_icon_next(cx + 44, cy - 5, C_SUB);
+
+    /* footer: output on the left, format badge on the right */
+    int fy = LCD_HEIGHT - 12;
+    gfx_icon_headphones(SIDE, fy - 8, C_SUB);
+    gfx_text(F_CAPS, SIDE + 14, fy, "HEADPHONES", C_SUB);
+    if (np->codec) {
+        if (np->lossless)
+            snprintf(buf, sizeof buf, "%s \xc2\xb7 %u/%lu", codec_name(np->codec), np->bits,
+                     (unsigned long)(np->sample_rate / 1000));
+        else
+            snprintf(buf, sizeof buf, "%s \xc2\xb7 %u KBPS", codec_name(np->codec), np->bitrate);
+        char up[48];
+        gfx_upper(up, sizeof up, buf);
+        gfx_text_right(F_CAPS, LCD_WIDTH - SIDE, fy, up, C_SUB);
+    }
 }
+
+/* ---- misc ---- */
 
 void draw_letter_overlay(char letter)
 {
     char s[2] = { letter, 0 };
-    int x = LCD_WIDTH / 2 - 28, y = LCD_HEIGHT / 2 - 28;
-    fill(x, y, 56, 56, C_FG);
-    text_center(f_title, LCD_WIDTH / 2, LCD_HEIGHT / 2 - font_h(f_title) / 2, 0, C_BG, s);
-    lcd_update_rect(x, y, 56, 56);
+    const int box = 56;
+    int x = (LCD_WIDTH - box) / 2, y = (LCD_HEIGHT - box) / 2;
+    gfx_fill_round(x, y, box, box, 10, C_SEL_BG);
+    gfx_text_center(F_TITLE, LCD_WIDTH / 2, y + (box + gfx_ascent(F_TITLE)) / 2 - 2, box, s, C_SEL_FG);
 }
 
 void draw_message(const char *line1, const char *line2)
 {
-    fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
-    text_center(f_title, LCD_WIDTH / 2, LCD_HEIGHT / 2 - 16, 300, C_FG, line1);
+    gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+    gfx_text_center(F_TITLE, LCD_WIDTH / 2, LCD_HEIGHT / 2 - 6, 300, line1, C_FG);
     if (line2)
-        text_center(f_small, LCD_WIDTH / 2, LCD_HEIGHT / 2 + 4, 300, C_SUB, line2);
-    lcd_update();
+        gfx_text_center(F_SUB, LCD_WIDTH / 2, LCD_HEIGHT / 2 + 14, 300, line2, C_SUB);
 }

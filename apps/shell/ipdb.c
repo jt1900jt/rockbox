@@ -102,7 +102,28 @@ static int groups_ok(const ipdb_group *g, uint32_t n, uint32_t strs_size, uint32
     return 1;
 }
 
+uint64_t ipdb_peek_generation(const void *buf, size_t len)
+{
+    const uint8_t *b = buf;
+    if (len < HEADER_SIZE || memcmp(b, "IPDB", 4) != 0)
+        return 0;
+    return rd64(b + 24);
+}
+
+uint32_t ipdb_peek_crc(const void *buf, size_t len)
+{
+    const uint8_t *b = buf;
+    if (len < HEADER_SIZE || memcmp(b, "IPDB", 4) != 0)
+        return 0;
+    return rd32(b + 40);
+}
+
 int ipdb_open(ipdb_db *db, const void *buf, size_t len)
+{
+    return ipdb_open_ex(db, buf, len, false);
+}
+
+int ipdb_open_ex(ipdb_db *db, const void *buf, size_t len, bool skip_crc)
 {
     const uint8_t *b = buf;
     struct sec s[S_COUNT];
@@ -125,7 +146,7 @@ int ipdb_open(ipdb_db *db, const void *buf, size_t len)
         return IPDB_E_SHORT;
     if (nsec > MAX_SECTIONS || table < HEADER_SIZE || table > fsize || (fsize - table) / ENTRY_SIZE < nsec)
         return IPDB_E_HEADER;
-    if (ipdb_crc32(0, b + HEADER_SIZE, fsize - HEADER_SIZE) != rd32(b + 40))
+    if (!skip_crc && ipdb_crc32(0, b + HEADER_SIZE, fsize - HEADER_SIZE) != rd32(b + 40))
         return IPDB_E_CRC;
 
     uint32_t table_end = table + nsec * ENTRY_SIZE;

@@ -20,6 +20,9 @@ main.c
 shell/ipdb.c
 shell/shell_main.c
 shell/shell_views.c
+shell/shell_gfx.c
+shell/shell_art.c
+shell/ipfn.c
 shell/shell_draw.c
 shell/shell_input.c
 shell/shell_bench.c

@@ -16,6 +16,7 @@
 #include "button.h"
 
 #include "shell.h"
+#include "shell_gfx.h"
 
 #define BENCH_DIR   SHELL_DIR "/bench"
 #define BENCH_DB    BENCH_DIR "/scale.ipdb"
@@ -94,15 +95,31 @@ static void bench_list_frame(const char *tag)
     const int n = 40;
     if (shell_db.n_tracks == 0)
         return;
+
+    /* full repaint: what a view change costs */
     unsigned long t0 = now_us();
     for (int i = 0; i < n; i++) {
-        v.sel = i % 6;
-        draw_list(&v);
+        v.sel = i % draw_rows_visible();
+        draw_list(&v, true);
+        gfx_flush();
     }
-    unsigned long per = (now_us() - t0) / n;
+    unsigned long full = (now_us() - t0) / n;
+
+    /* selection move: the common case, two rows instead of the screen */
+    draw_list(&v, true);
+    gfx_flush();
+    t0 = now_us();
+    for (int i = 0; i < n; i++) {
+        int old = v.sel;
+        v.sel = (v.sel + 1) % draw_rows_visible();
+        draw_list_rows(&v, old, v.sel);
+        gfx_flush();
+    }
+    unsigned long partial = (now_us() - t0) / n;
+
     lcd_clear_display();
     line_y = 0;
-    out("list frame %s (draw + full update): %lu us", tag, per);
+    out("list %s: full %lu us, move selection %lu us", tag, full, partial);
 }
 
 static void bench_storage(void *buf)

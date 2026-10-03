@@ -1,5 +1,9 @@
 /* Shell entry: loads the library, runs the navigation stack, starts playback.
- * Falls back to the stock Rockbox UI when no valid library is present. */
+ * Falls back to the stock Rockbox UI when no valid library is present.
+ *
+ * Redraw policy: a full-screen push costs ~25 ms on the 7G, so screens repaint only what
+ * changed. Moving the selection repaints two rows; the Now Playing tick repaints the
+ * progress area. Everything else sets a full-redraw flag. */
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,11 +20,15 @@
 #include "viewport.h"
 
 #include "shell.h"
+#include "shell_art.h"
+#include "shell_gfx.h"
 #include "shell_main.h"
+#include "string-extra.h"
 
 #define STACK_MAX   12
 #define MAX_DB_SIZE (48u * 1024 * 1024)
 #define LETTER_TICKS (HZ * 3 / 4)
+#define STAMP_PATH  SHELL_DIR "/.verified"
 
 ipdb_db shell_db;
 static int db_handle = -1;
@@ -30,6 +38,16 @@ static int depth;
 static long overlay_until;
 static char overlay_letter;
 
+/* Redraw state. */
+static bool need_full = true;
+static int drawn_sel = -1, drawn_top = -1;
+
+static void mark_full(void)
+{
+    need_full = true;
+    drawn_sel = drawn_top = -1;
+}
+
 /* ---- library ---- */
 
 static void db_unload(void)
@@ -38,6 +56,36 @@ static void db_unload(void)
         core_free(db_handle);
     db_handle = -1;
     memset(&shell_db, 0, sizeof shell_db);
+}
+
+/* The CRC covers the whole file and dominates load time (589 ms for a 7 MB library on the
+ * 7G, against 24 ms for the structural checks). A stamp file records what was last
+ * verified, so an unchanged library skips the CRC on later boots. The structural checks,
+ * which are what keep drawing bounds-safe, always run. */
+struct stamp {
+    uint64_t generation;
+    uint32_t size;
+    uint32_t crc;
+};
+
+static bool stamp_matches(const struct stamp *want)
+{
+    struct stamp got;
+    int fd = open(STAMP_PATH, O_RDONLY);
+    if (fd < 0)
+        return false;
+    bool ok = read(fd, &got, sizeof got) == (ssize_t)sizeof got;
+    close(fd);
+    return ok && got.generation == want->generation && got.size == want->size && got.crc == want->crc;
+}
+
+static void stamp_write(const struct stamp *s)
+{
+    int fd = open(STAMP_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0)
+        return;
+    write(fd, s, sizeof *s);
+    close(fd);
 }
 
 /* 0 on success, an IPDB_E_* code, or -1 for I/O and memory errors. */
@@ -65,11 +113,20 @@ static int db_load(void)
         core_free(h);
         return -1;
     }
-    int err = ipdb_open(&shell_db, buf, (size_t)size);
+    struct stamp st = {
+        .generation = ipdb_peek_generation(buf, (size_t)size),
+        .size = (uint32_t)size,
+        .crc = ipdb_peek_crc(buf, (size_t)size),
+    };
+    bool skip_crc = st.generation != 0 && stamp_matches(&st);
+
+    int err = ipdb_open_ex(&shell_db, buf, (size_t)size, skip_crc);
     if (err != IPDB_OK) {
         core_free(h);
         return err;
     }
+    if (!skip_crc)
+        stamp_write(&st);
     db_handle = h;
     return 0;
 }
@@ -88,6 +145,16 @@ static void push(const struct view *v)
     stack[depth] = *v;
     view_prepare(&stack[depth]);
     depth++;
+    art_cancel_pending();
+    mark_full();
+}
+
+static void pop(void)
+{
+    if (depth > 1)
+        depth--;
+    art_cancel_pending();
+    mark_full();
 }
 
 static void push_kind(enum view_kind kind)
@@ -101,11 +168,55 @@ static void reset_to_home(void)
     memset(stack, 0, sizeof stack);
     depth = 1;
     stack[0].kind = V_HOME;
+    mark_full();
 }
 
 static bool playing(void)
 {
     return (audio_status() & AUDIO_STATUS_PLAY) != 0;
+}
+
+/* ---- now playing lookup ---- */
+
+/* The DB is sorted by title, not path, so finding the playing track is a linear scan.
+ * It runs once per track change, not per frame. */
+bool shell_np_info(struct np_info *np)
+{
+    static char last_path[MAX_PATH];
+    static struct np_info cached;
+    static bool cached_ok;
+
+    struct mp3entry *id3 = audio_current_track();
+    if (!id3 || !id3->path[0]) {
+        memset(np, 0, sizeof *np);
+        np->art_id = IPDB_NONE;
+        return false;
+    }
+    if (strcmp(last_path, id3->path) != 0) {
+        strlcpy(last_path, id3->path, sizeof last_path);
+        memset(&cached, 0, sizeof cached);
+        cached.art_id = IPDB_NONE;
+        cached_ok = false;
+        for (uint32_t i = 0; i < shell_db.n_tracks; i++) {
+            const ipdb_track *t = &shell_db.tracks[i];
+            if (strcmp(ipdb_str(&shell_db, t->path), id3->path) != 0)
+                continue;
+            const ipdb_album *al = &shell_db.albums[t->album_id];
+            cached.art_id = al->art_id;
+            cached.colors[0] = al->colors[0];
+            cached.colors[1] = al->colors[1];
+            cached.colors[2] = al->colors[2];
+            cached.sample_rate = t->sample_rate;
+            cached.bitrate = t->bitrate_kbps;
+            cached.codec = t->codec;
+            cached.bits = t->bits;
+            cached.lossless = (t->flags & IPDB_TF_LOSSLESS) != 0;
+            cached_ok = true;
+            break;
+        }
+    }
+    *np = cached;
+    return cached_ok;
 }
 
 /* ---- home ---- */
@@ -119,16 +230,16 @@ struct home_item {
 };
 
 static const struct home_item home_all[] = {
-    { "PLAYLISTS", V_PLAYLISTS, false, false, false },
-    { "ARTISTS", V_ARTISTS, false, false, false },
-    { "ALBUMS", V_ALBUMS, false, false, false },
-    { "SONGS", V_SONGS, false, false, false },
-    { "GENRES", V_GENRES, false, false, false },
-    { "COMPOSERS", V_COMPOSERS, false, false, false },
-    { "NOW PLAYING", V_NOW_PLAYING, false, false, false },
-    { "USB LINK", V_HOME, false, false, true },
-    { "BENCHMARK", V_HOME, false, true, false },
-    { "ROCKBOX", V_HOME, true, false, false },
+    { "Playlists", V_PLAYLISTS, false, false, false },
+    { "Artists", V_ARTISTS, false, false, false },
+    { "Albums", V_ALBUMS, false, false, false },
+    { "Songs", V_SONGS, false, false, false },
+    { "Genres", V_GENRES, false, false, false },
+    { "Composers", V_COMPOSERS, false, false, false },
+    { "Now Playing", V_NOW_PLAYING, false, false, false },
+    { "USB Link", V_HOME, false, false, true },
+    { "Benchmark", V_HOME, false, true, false },
+    { "Rockbox", V_HOME, true, false, false },
 };
 #define HOME_ALL ((int)(sizeof home_all / sizeof home_all[0]))
 
@@ -156,11 +267,15 @@ static void home_render(void)
         stack[0].sel = n - 1;
     for (int i = 0; i < n; i++)
         labels[i] = items[i]->label;
-    draw_home(stack[0].sel, labels, n);
+
+    struct np_info np;
+    bool have = shell_np_info(&np);
+    draw_home(stack[0].sel, labels, n, have ? np.art_id : IPDB_NONE, have ? np.colors[0] : 0);
 }
 
 static void enter_rockbox_ui(void)
 {
+    art_shutdown();
     FOR_NB_SCREENS(i)
         viewportmanager_theme_enable(i, true, NULL);
     root_menu(); /* does not return */
@@ -175,11 +290,13 @@ static void home_select(void)
     const struct home_item *it = items[stack[0].sel];
     if (it->rockbox)
         enter_rockbox_ui();
-    else if (it->bench)
+    else if (it->bench) {
         shell_bench_run();
-    else if (it->link)
+        mark_full();
+    } else if (it->link) {
         shell_link_run();
-    else
+        mark_full();
+    } else
         push_kind(it->kind);
 }
 
@@ -187,6 +304,7 @@ static void home_select(void)
 
 static void list_clamp(struct view *v)
 {
+    int rows = draw_rows_visible();
     int n = view_count(v);
     if (v->sel >= n)
         v->sel = n - 1;
@@ -194,8 +312,8 @@ static void list_clamp(struct view *v)
         v->sel = 0;
     if (v->top > v->sel)
         v->top = v->sel;
-    if (v->sel >= v->top + SHELL_LIST_ROWS)
-        v->top = v->sel - SHELL_LIST_ROWS + 1;
+    if (v->sel >= v->top + rows)
+        v->top = v->sel - rows + 1;
     if (v->top < 0)
         v->top = 0;
 }
@@ -232,6 +350,7 @@ static void letter_jump(struct view *v, int dir)
             list_clamp(v);
             overlay_letter = b < 26 ? (char)('A' + b) : '#';
             overlay_until = current_tick + LETTER_TICKS;
+            mark_full();
             return;
         }
     }
@@ -273,6 +392,7 @@ static void toggle_pause(void)
         audio_resume();
     else if (st & AUDIO_STATUS_PLAY)
         audio_pause();
+    mark_full();
 }
 
 /* ---- loop ---- */
@@ -280,28 +400,53 @@ static void toggle_pause(void)
 static void render(void)
 {
     struct view *v = top();
+
     switch (v->kind) {
     case V_HOME:
-        home_render();
+        if (need_full || drawn_sel != v->sel) {
+            home_render();
+            drawn_sel = v->sel;
+            need_full = false;
+        }
         break;
-    case V_NOW_PLAYING:
-        draw_now_playing();
-        break;
-    default:
-        list_clamp(v);
-        draw_list(v);
-        if (overlay_letter && TIME_BEFORE(current_tick, overlay_until))
-            draw_letter_overlay(overlay_letter);
-        else
-            overlay_letter = 0;
+
+    case V_NOW_PLAYING: {
+        struct np_info np;
+        shell_np_info(&np);
+        draw_now_playing(&np, need_full);
+        need_full = false;
         break;
     }
+
+    default:
+        list_clamp(v);
+        if (need_full || v->top != drawn_top) {
+            draw_list(v, need_full);
+            need_full = false;
+        } else if (v->sel != drawn_sel) {
+            /* selection moved inside the visible window: two rows, not the screen */
+            draw_list_rows(v, drawn_sel, v->sel);
+        }
+        drawn_sel = v->sel;
+        drawn_top = v->top;
+
+        if (overlay_letter) {
+            if (TIME_BEFORE(current_tick, overlay_until))
+                draw_letter_overlay(overlay_letter);
+            else {
+                overlay_letter = 0;
+                mark_full();
+            }
+        }
+        break;
+    }
+    gfx_flush();
 }
 
 static int timeout_for(const struct view *v)
 {
     if (v->kind == V_NOW_PLAYING)
-        return HZ / 4;
+        return HZ / 2;
     if (overlay_letter)
         return overlay_until - current_tick > 0 ? overlay_until - current_tick : 1;
     return HZ;
@@ -316,11 +461,12 @@ static void handle(enum action a)
 
     switch (a) {
     case A_BACK:
-        if (depth > 1)
-            depth--;
+        pop();
         return;
     case A_HOME:
         depth = 1;
+        art_cancel_pending();
+        mark_full();
         return;
     case A_PLAY:
         toggle_pause();
@@ -353,12 +499,13 @@ static void handle(enum action a)
         switch (a) {
         case A_UP:   adjust_volume(-1); break;
         case A_DOWN: adjust_volume(1); break;
-        case A_NEXT: audio_next(); break;
+        case A_NEXT: audio_next(); mark_full(); break;
         case A_PREV:
             if (id3 && id3->elapsed > 3000)
                 audio_ff_rewind(0);
             else
                 audio_prev();
+            mark_full();
             break;
         default: break;
         }
@@ -391,16 +538,24 @@ void shell_main(void)
     FOR_NB_SCREENS(i)
         viewportmanager_theme_enable(i, false, NULL);
     input_init();
-    draw_init();
     shell_link_setup();
+
+    if (!gfx_init()) {
+        /* Without fonts the shell cannot draw anything legible. */
+        FOR_NB_SCREENS(i)
+            viewportmanager_theme_enable(i, true, NULL);
+        root_menu();
+    }
 
     int err = db_load();
     if (err != 0) {
         draw_message("No library found",
                      err < 0 ? "Sync from the companion to " SHELL_DIR : ipdb_strerror(err));
+        gfx_flush();
         sleep(HZ * 3);
         enter_rockbox_ui();
     }
+    art_init(shell_db.generation);
 
     reset_to_home();
     for (;;) {
@@ -412,6 +567,8 @@ void shell_main(void)
 #endif
             continue;
         }
+        if (art_take_dirty())
+            mark_full(); /* art arrived: repaint so it appears */
         handle(a);
     }
 }

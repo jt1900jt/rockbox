@@ -148,6 +148,10 @@ enum
 
 #if defined(BOOTLOADER)
 #define USBMODE_DEFAULT USB_MODE_MASS_STORAGE
+#elif defined(HAVE_IPODOS_SHELL)
+/* iPod OS stays in the shell when plugged in and syncs over the link interface;
+ * hold any button while connecting for disk mode. */
+#define USBMODE_DEFAULT USB_MODE_CHARGE
 #else
 #define USBMODE_DEFAULT USB_MODE_MASS_STORAGE
 #endif
