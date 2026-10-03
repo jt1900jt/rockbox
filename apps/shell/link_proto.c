@@ -81,12 +81,71 @@ static void run_source(struct link *l)
     send_frame(l, LINK_SOURCE_DONE, 0, l->seq, done, sizeof done);
 }
 
+static int send_ok(struct link *l)
+{
+    return send_frame(l, LINK_OK, 0, l->seq, NULL, 0);
+}
+
+/* Paths arrive as the frame payload. Reject anything that could escape the device root
+ * or overflow the buffer; the companion is trusted, but a corrupted frame is not. */
+static bool path_ok(const struct link *l)
+{
+    if (l->path_have == 0 || l->path_have >= LINK_PATH_MAX)
+        return false;
+    if (l->path[0] != '/')
+        return false;
+    for (size_t i = 0; i + 1 < l->path_have; i++)
+        if (l->path[i] == '.' && l->path[i + 1] == '.')
+            return false;
+    return true;
+}
+
+struct emit_state {
+    struct link *l;
+    uint8_t buf[LINK_CHUNK_MAX];
+    size_t used;
+    int failed;
+};
+
+static void emit_flush(struct emit_state *e)
+{
+    if (e->used && send_frame(e->l, LINK_LIST_R, 0, e->l->seq, e->buf, (uint32_t)e->used) < 0)
+        e->failed = 1;
+    e->used = 0;
+}
+
+static void emit_entry(void *ctx, const char *name, int kind, uint32_t size, uint32_t mtime)
+{
+    struct emit_state *e = ctx;
+    size_t n = strlen(name);
+    if (e->failed || n > 255)
+        return;
+    size_t need = 1 + 4 + 4 + 2 + n;
+    if (e->used + need > sizeof e->buf)
+        emit_flush(e);
+    uint8_t *p = e->buf + e->used;
+    *p++ = (uint8_t)kind;
+    put32(p, size); p += 4;
+    put32(p, mtime); p += 4;
+    p[0] = (uint8_t)(n & 0xFF); p[1] = (uint8_t)(n >> 8); p += 2;
+    memcpy(p, name, n);
+    e->used += need;
+}
+
+static int get_send(void *ctx, const void *buf, size_t n)
+{
+    struct link *l = ctx;
+    return send_frame(l, LINK_DATA, 0, l->seq, buf, (uint32_t)n);
+}
+
 static void begin_payload(struct link *l)
 {
     l->in_payload = 1;
     l->remaining = l->len;
     l->crc_run = 0;
     l->small_have = 0;
+    l->path_have = 0;
+    l->chunk_have = 0;
 }
 
 static void consume(struct link *l, const uint8_t *p, size_t n)
@@ -106,6 +165,212 @@ static void consume(struct link *l, const uint8_t *p, size_t n)
             l->small_have = pos + k;
         }
         break;
+
+    case LINK_STAT:
+    case LINK_LIST:
+    case LINK_MKDIR:
+    case LINK_GET:
+    case LINK_DELETE:
+        if (l->path_have + n < LINK_PATH_MAX) {
+            memcpy(l->path + l->path_have, p, n);
+            l->path_have += n;
+            l->path[l->path_have] = 0;
+        } else {
+            l->path_have = LINK_PATH_MAX; /* marks overflow */
+        }
+        break;
+
+    case LINK_PUT_BEGIN:
+        /* header is 9 bytes, then the path */
+        if (pos < 9) {
+            size_t k = n < 9 - pos ? n : 9 - pos;
+            memcpy(l->small + pos, p, k);
+            l->small_have = pos + k;
+            p += k;
+            n -= k;
+        }
+        if (n && l->path_have + n < LINK_PATH_MAX) {
+            memcpy(l->path + l->path_have, p, n);
+            l->path_have += n;
+            l->path[l->path_have] = 0;
+        }
+        break;
+
+    case LINK_PUT_DATA:
+        /* Streamed straight to storage rather than buffered whole: files are larger
+         * than anything we can hold in RAM. */
+        if (l->put_open && !l->put_bad) {
+            if (l->put_flags & LINK_PUT_F_CRC)
+                l->put_crc = ipdb_crc32(l->put_crc, p, n);
+            if (l->io.fs && l->io.fs->put_data(l->io.fs->ctx, p, n) < 0)
+                l->put_bad = true;
+            else
+                l->put_written += (uint32_t)n;
+        }
+        break;
+
+    default:
+        break;
+    }
+}
+
+/* File operations. Each one answers with OK, a typed reply, or ERROR; the companion
+ * treats any ERROR as fatal for that file and carries on with the next. */
+static void handle_fs(struct link *l, int crc_ok)
+{
+    const struct link_fs *fs = l->io.fs;
+    uint8_t reply[24];
+
+    if (!fs) {
+        send_error(l, l->seq, "no filesystem on this link");
+        return;
+    }
+    if (!crc_ok) {
+        if (l->type == LINK_PUT_DATA)
+            l->put_bad = true;
+        send_error(l, l->seq, "crc mismatch");
+        return;
+    }
+
+    switch (l->type) {
+    case LINK_STAT: {
+        if (!path_ok(l)) {
+            send_error(l, l->seq, "bad path");
+            return;
+        }
+        int kind = 0;
+        uint32_t size = 0, mtime = 0;
+        if (fs->stat(fs->ctx, l->path, &kind, &size, &mtime) < 0)
+            kind = 0;
+        reply[0] = (uint8_t)kind;
+        put32(reply + 1, size);
+        put32(reply + 5, mtime);
+        send_frame(l, LINK_STAT_R, 0, l->seq, reply, 9);
+        break;
+    }
+
+    case LINK_LIST: {
+        if (!path_ok(l)) {
+            send_error(l, l->seq, "bad path");
+            return;
+        }
+        struct emit_state e = { .l = l, .used = 0, .failed = 0 };
+        if (fs->list(fs->ctx, l->path, emit_entry, &e) < 0) {
+            send_error(l, l->seq, "cannot list");
+            return;
+        }
+        emit_flush(&e);
+        send_ok(l);
+        break;
+    }
+
+    case LINK_MKDIR:
+        if (!path_ok(l)) {
+            send_error(l, l->seq, "bad path");
+            return;
+        }
+        if (fs->mkdir(fs->ctx, l->path) < 0)
+            send_error(l, l->seq, "cannot create directory");
+        else
+            send_ok(l);
+        break;
+
+    case LINK_DELETE:
+        if (!path_ok(l)) {
+            send_error(l, l->seq, "bad path");
+            return;
+        }
+        if (fs->remove(fs->ctx, l->path) < 0)
+            send_error(l, l->seq, "cannot delete");
+        else
+            send_ok(l);
+        break;
+
+    case LINK_PUT_BEGIN: {
+        if (l->put_open) /* a previous transfer was abandoned */
+            fs->put_end(fs->ctx, false);
+        l->put_open = false;
+        l->put_bad = false;
+        l->put_written = 0;
+        l->put_crc = 0;
+        if (l->small_have < 9 || !path_ok(l)) {
+            send_error(l, l->seq, "bad put header");
+            return;
+        }
+        uint32_t size = get32(l->small);
+        l->put_expect_crc = get32(l->small + 4);
+        l->put_flags = l->small[8];
+        if (fs->put_begin(fs->ctx, l->path, size) < 0) {
+            send_error(l, l->seq, "cannot open for writing");
+            return;
+        }
+        l->put_open = true;
+        send_ok(l);
+        break;
+    }
+
+    case LINK_PUT_DATA:
+        /* The payload was streamed to storage in consume(); nothing to answer unless
+         * it failed, and the companion learns that at PUT_END. */
+        break;
+
+    case LINK_PUT_END: {
+        if (!l->put_open) {
+            send_error(l, l->seq, "no transfer in progress");
+            return;
+        }
+        bool ok = !l->put_bad;
+        if (ok && (l->put_flags & LINK_PUT_F_CRC) && l->put_crc != l->put_expect_crc)
+            ok = false;
+        /* Commit by rename only when the whole file arrived intact, so an interrupted
+         * sync never leaves a half-written file under its real name. */
+        if (fs->put_end(fs->ctx, ok) < 0)
+            ok = false;
+        l->put_open = false;
+        if (!ok) {
+            send_error(l, l->seq, "transfer failed");
+            return;
+        }
+        put32(reply, l->put_written);
+        send_frame(l, LINK_OK, 0, l->seq, reply, 4);
+        break;
+    }
+
+    case LINK_GET: {
+        if (!path_ok(l)) {
+            send_error(l, l->seq, "bad path");
+            return;
+        }
+        int n = fs->get(fs->ctx, l->path, get_send, l);
+        if (n < 0) {
+            send_error(l, l->seq, "cannot read");
+            return;
+        }
+        put32(reply, (uint32_t)n);
+        send_frame(l, LINK_GET_DONE, 0, l->seq, reply, 4);
+        break;
+    }
+
+    case LINK_FREE: {
+        uint64_t freeb = 0, total = 0;
+        if (fs->freespace(fs->ctx, &freeb, &total) < 0) {
+            send_error(l, l->seq, "cannot stat volume");
+            return;
+        }
+        for (int i = 0; i < 8; i++) {
+            reply[i] = (uint8_t)(freeb >> (8 * i));
+            reply[8 + i] = (uint8_t)(total >> (8 * i));
+        }
+        send_frame(l, LINK_FREE_R, 0, l->seq, reply, 16);
+        break;
+    }
+
+    case LINK_SYNC_DONE:
+        if (fs->sync_done)
+            fs->sync_done(fs->ctx);
+        send_ok(l);
+        break;
+
     default:
         break;
     }
@@ -154,6 +419,19 @@ static void finish(struct link *l)
         else
             run_source(l);
         break;
+    case LINK_STAT:
+    case LINK_LIST:
+    case LINK_MKDIR:
+    case LINK_GET:
+    case LINK_DELETE:
+    case LINK_PUT_BEGIN:
+    case LINK_PUT_DATA:
+    case LINK_PUT_END:
+    case LINK_FREE:
+    case LINK_SYNC_DONE:
+        handle_fs(l, crc_ok);
+        break;
+
     default:
         send_error(l, l->seq, "unknown frame type");
         break;

@@ -14,6 +14,7 @@
 #include "usb.h"
 
 #include "shell.h"
+#include "shell_sync.h"
 
 #if defined(USB_ENABLE_SERIAL) || defined(USB_ENABLE_BULK)
 #include "link_proto.h"
@@ -117,7 +118,8 @@ static void draw(unsigned long rx_rate, unsigned long tx_rate)
 
 void shell_link_run(void)
 {
-    struct link_io io = { .write = link_write, .ctx = NULL, .hello = MODEL_NAME };
+    struct link_io io = { .write = link_write, .ctx = NULL, .hello = MODEL_NAME,
+                          .fs = shell_sync_fs() };
     link_init(&link, &io);
     long next_draw = 0, last_tick = current_tick;
     uint64_t last_rx = 0, last_tx = 0;
@@ -143,8 +145,10 @@ void shell_link_run(void)
         }
 
         long b = button_get(false);
-        if (b == BUTTON_MENU)
+        if (b == BUTTON_MENU) {
+            shell_sync_abort();
             return;
+        }
         if (b != BUTTON_NONE && !(b & (BUTTON_REL | BUTTON_REPEAT)) && (b & SYS_EVENT))
             default_event_handler(b);
         if (n <= 0)
