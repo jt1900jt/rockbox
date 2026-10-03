@@ -87,16 +87,28 @@ static int send_ok(struct link *l)
 }
 
 /* Paths arrive as the frame payload. Reject anything that could escape the device root
- * or overflow the buffer; the companion is trusted, but a corrupted frame is not. */
+ * or overflow the buffer; the companion is trusted, but a corrupted frame is not.
+ *
+ * Only a whole component of ".." escapes the root. Rejecting the substring anywhere
+ * also refused ordinary filenames: "R.O.D..m4a" is legitimate. */
 static bool path_ok(const struct link *l)
 {
     if (l->path_have == 0 || l->path_have >= LINK_PATH_MAX)
         return false;
     if (l->path[0] != '/')
         return false;
-    for (size_t i = 0; i + 1 < l->path_have; i++)
-        if (l->path[i] == '.' && l->path[i + 1] == '.')
+
+    const char *p = l->path;
+    while (*p) {
+        const char *start = p;
+        while (*p && *p != '/')
+            p++;
+        size_t n = (size_t)(p - start);
+        if (n == 2 && start[0] == '.' && start[1] == '.')
             return false;
+        while (*p == '/')
+            p++;
+    }
     return true;
 }
 
