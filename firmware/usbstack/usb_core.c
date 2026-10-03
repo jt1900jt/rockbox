@@ -37,6 +37,9 @@
 #if defined(USB_ENABLE_SERIAL)
 #include "usb_serial.h"
 #endif
+#ifdef USB_ENABLE_BULK
+#include "usb_bulk.h"
+#endif
 
 #if defined(USB_ENABLE_CHARGING_ONLY)
 #include "usb_charging_only.h"
@@ -275,6 +278,9 @@ static struct usb_class_driver* drivers[USB_NUM_DRIVERS] =
 #ifdef USB_ENABLE_SERIAL
     [USB_DRIVER_SERIAL] = &usb_cdrv_serial,
 #endif
+#ifdef USB_ENABLE_BULK
+    [USB_DRIVER_BULK] = &usb_cdrv_bulk,
+#endif
 #ifdef USB_ENABLE_CHARGING_ONLY
     [USB_DRIVER_CHARGING_ONLY] = &usb_cdrv_charging_only,
 #endif
@@ -288,6 +294,60 @@ static struct usb_class_driver* drivers[USB_NUM_DRIVERS] =
     [USB_DRIVER_IAP] = &usb_cdrv_iap,
 #endif
 };
+
+
+#ifdef USB_ENABLE_BULK
+/* BOS descriptor advertising two platform capabilities:
+ *  - WebUSB, so Chrome offers the device without any host driver
+ *  - Microsoft OS 2.0, so Windows binds WinUSB to the vendor interface automatically
+ * Both are read by the host with vendor requests (USB_BULK_VENDOR_CODE below).
+ * See: WebUSB spec section 4, and the Microsoft OS 2.0 descriptors specification. */
+#define USB_BULK_VENDOR_CODE 0x21
+#define USB_BULK_MS_LENGTH   178
+
+static const unsigned char bos_descriptor[] __attribute__((aligned(2))) =
+{
+    0x05, USB_DT_BOS, 0x39, 0x00, 0x02,     /* BOS, wTotalLength 0x39, 2 capabilities */
+
+    /* WebUSB platform capability (UUID 3408b638-09a9-47a0-8bfd-a0768815b665) */
+    0x18, 0x10, 0x05, 0x00,
+    0x38, 0xB6, 0x08, 0x34, 0xA9, 0x09, 0xA0, 0x47,
+    0x8B, 0xFD, 0xA0, 0x76, 0x88, 0x15, 0xB6, 0x65,
+    0x00, 0x01,                             /* bcdVersion 1.00 */
+    USB_BULK_VENDOR_CODE,
+    0x00,                                   /* iLandingPage: none */
+
+    /* Microsoft OS 2.0 platform capability (UUID d8dd60df-4589-4cc7-9cd2-659d9e648a9f) */
+    0x1C, 0x10, 0x05, 0x00,
+    0xDF, 0x60, 0xDD, 0xD8, 0x89, 0x45, 0xC7, 0x4C,
+    0x9C, 0xD2, 0x65, 0x9D, 0x9E, 0x64, 0x8A, 0x9F,
+    0x00, 0x00, 0x03, 0x06,                 /* dwWindowsVersion: 8.1 or later */
+    USB_BULK_MS_LENGTH, 0x00,               /* wMSOSDescriptorSetTotalLength */
+    USB_BULK_VENDOR_CODE,
+    0x00                                    /* bAltEnumCode */
+};
+
+/* MS OS 2.0 descriptor set: bind WinUSB to the vendor interface and give it a device
+ * interface GUID so applications can find it. */
+static const unsigned char ms_os_descriptor[USB_BULK_MS_LENGTH] __attribute__((aligned(2))) =
+{
+    0x0A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x06, 0xB2, 0x00, 0x08, 0x00,
+    0x01, 0x00, 0x00, 0x00, 0xA8, 0x00, 0x08, 0x00, 0x02, 0x00, 0x00, 0x01,
+    0xA0, 0x00, 0x14, 0x00, 0x03, 0x00, 0x57, 0x49, 0x4E, 0x55, 0x53, 0x42,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x84, 0x00,
+    0x04, 0x00, 0x07, 0x00, 0x2A, 0x00, 0x44, 0x00, 0x65, 0x00, 0x76, 0x00,
+    0x69, 0x00, 0x63, 0x00, 0x65, 0x00, 0x49, 0x00, 0x6E, 0x00, 0x74, 0x00,
+    0x65, 0x00, 0x72, 0x00, 0x66, 0x00, 0x61, 0x00, 0x63, 0x00, 0x65, 0x00,
+    0x47, 0x00, 0x55, 0x00, 0x49, 0x00, 0x44, 0x00, 0x73, 0x00, 0x00, 0x00,
+    0x50, 0x00, 0x7B, 0x00, 0x39, 0x00, 0x42, 0x00, 0x34, 0x00, 0x31, 0x00,
+    0x37, 0x00, 0x34, 0x00, 0x43, 0x00, 0x32, 0x00, 0x2D, 0x00, 0x36, 0x00,
+    0x41, 0x00, 0x33, 0x00, 0x44, 0x00, 0x2D, 0x00, 0x34, 0x00, 0x43, 0x00,
+    0x42, 0x00, 0x37, 0x00, 0x2D, 0x00, 0x39, 0x00, 0x45, 0x00, 0x33, 0x00,
+    0x46, 0x00, 0x2D, 0x00, 0x31, 0x00, 0x44, 0x00, 0x34, 0x00, 0x35, 0x00,
+    0x45, 0x00, 0x32, 0x00, 0x39, 0x00, 0x43, 0x00, 0x31, 0x00, 0x42, 0x00,
+    0x30, 0x00, 0x41, 0x00, 0x7D, 0x00, 0x00, 0x00, 0x00, 0x00,
+};
+#endif /* USB_ENABLE_BULK */
 
 static int usb_core_do_set_config(uint8_t new_config);
 static void usb_core_control_request_handler(struct usb_ctrlrequest* req, uint8_t* reqdata, size_t reqdata_size);
@@ -846,6 +906,13 @@ static void request_handler_device_get_descriptor(struct usb_ctrlrequest* req, u
             size = sizeof(struct usb_qualifier_descriptor);
             break;
 
+#ifdef USB_ENABLE_BULK
+        case USB_DT_BOS:
+            ptr = bos_descriptor;
+            size = sizeof(bos_descriptor);
+            break;
+#endif
+
         default:
             logf("ctrl desc.");
             control_request_handler_drivers(req, reqdata, reqdata_size);
@@ -1013,6 +1080,22 @@ static void request_handler_device(struct usb_ctrlrequest* req, uint8_t* reqdata
         #ifdef USB_ENABLE_IAP
         case USB_REQ_APPLE_SET_AVAIL_CURRENT:
             usb_core_control_response(USB_CONTROL_ACK, NULL, 0);
+            break;
+        #endif
+        #ifdef USB_ENABLE_BULK
+        case USB_BULK_VENDOR_CODE:
+            /* wIndex 7 = MS OS 2.0 descriptor set; the WebUSB capability uses the same
+             * bRequest but asks for wIndex 2 (URL), which we do not provide. */
+            if((req->bRequestType & USB_TYPE_MASK) == USB_TYPE_VENDOR && req->wIndex == 7) {
+                size_t len = MIN(sizeof(ms_os_descriptor), reqdata_size);
+                memcpy(reqdata, ms_os_descriptor, len);
+                /* patch in the real interface number of the bulk driver */
+                if(len > 22)
+                    reqdata[22] = usb_bulk_interface();
+                usb_core_control_response(USB_CONTROL_ACK, reqdata, MIN(len, req->wLength));
+            } else {
+                usb_core_control_response(USB_CONTROL_STALL, NULL, 0);
+            }
             break;
         #endif
         default:

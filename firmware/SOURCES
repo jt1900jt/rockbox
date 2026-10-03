@@ -967,6 +967,9 @@ usbstack/usb_storage.c
 #ifdef USB_ENABLE_SERIAL
 usbstack/usb_serial.c
 #endif
+#ifdef USB_ENABLE_BULK
+usbstack/usb_bulk.c
+#endif
 #ifdef USB_ENABLE_AUDIO
 usbstack/usb_audio.c
 #endif

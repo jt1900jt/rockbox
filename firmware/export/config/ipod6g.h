@@ -251,8 +251,9 @@
 /* logf() over USB serial (http://www.rockbox.org/wiki/PortalPlayerUsb) */
 //#define USB_ENABLE_SERIAL
 #if defined(HAVE_IPODOS_SHELL) && !defined(BOOTLOADER) && !defined(SIMULATOR)
-/* iPod OS: CDC-ACM data link to the companion */
+/* iPod OS: vendor-class bulk link to the companion (WebUSB), plus CDC-ACM for logging */
 #define USB_ENABLE_SERIAL
+#define USB_ENABLE_BULK
 #endif
 #define HAVE_USBSTACK
 #define HAVE_USB_HID_MOUSE

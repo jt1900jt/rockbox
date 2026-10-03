@@ -163,6 +163,9 @@ enum {
 #ifdef USB_ENABLE_SERIAL
     USB_DRIVER_SERIAL,
 #endif
+#ifdef USB_ENABLE_BULK
+    USB_DRIVER_BULK,
+#endif
 #ifdef USB_ENABLE_CHARGING_ONLY
     USB_DRIVER_CHARGING_ONLY,
 #endif
@@ -288,6 +291,26 @@ struct usb_serial_stats {
     unsigned long rx_xfer_size;
 };
 void usb_serial_get_stats(struct usb_serial_stats *out);
+#endif
+
+#ifdef USB_ENABLE_BULK
+/* enable or disable the vendor bulk driver */
+void usb_set_bulk(bool enable);
+bool usb_get_bulk(void);
+/* Bulk stream API, implemented in usbstack/usb_bulk.c */
+int usb_bulk_read(void *buf, int maxlen);
+int usb_bulk_write(const void *data, int length);
+bool usb_bulk_connected(void);
+struct usb_bulk_stats {
+    unsigned long rx_xfers;
+    unsigned long rx_bytes;
+    unsigned long rx_busy_us;
+    unsigned long rx_idle_us;
+    unsigned long rx_stalls;
+    unsigned long rx_errors;
+    unsigned long rx_xfer_size;
+};
+void usb_bulk_get_stats(struct usb_bulk_stats *out);
 #endif
 
 #if defined(USB_ENABLE_AUDIO) || defined(HAVE_HOST_USB_AUDIO)

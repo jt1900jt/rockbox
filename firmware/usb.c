@@ -120,6 +120,9 @@ static bool usb_hid = true;
 #ifdef USB_ENABLE_SERIAL
 static bool usb_serial = false;
 #endif
+#ifdef USB_ENABLE_BULK
+static bool usb_bulk = false;
+#endif
 #ifdef USB_ENABLE_AUDIO
 static int usb_audio = 0;
 #endif
@@ -221,6 +224,9 @@ static inline void usb_configure_drivers(int for_state)
 #ifdef USB_ENABLE_SERIAL
         usb_core_enable_driver(USB_DRIVER_SERIAL, usb_serial);
 #endif
+#ifdef USB_ENABLE_BULK
+        usb_core_enable_driver(USB_DRIVER_BULK, usb_bulk);
+#endif
 #ifdef USB_ENABLE_AUDIO
         usb_core_enable_driver(USB_DRIVER_AUDIO, (usb_audio == 1) || (usb_audio == 2)); // while "always" or "only in charge-only mode"
 #endif /* USB_ENABLE_AUDIO */
@@ -245,6 +251,9 @@ static inline void usb_configure_drivers(int for_state)
 #endif
 #ifdef USB_ENABLE_SERIAL
         usb_core_enable_driver(USB_DRIVER_SERIAL, usb_serial);
+#endif
+#ifdef USB_ENABLE_BULK
+        usb_core_enable_driver(USB_DRIVER_BULK, usb_bulk);
 #endif
 #ifdef USB_ENABLE_AUDIO
         usb_core_enable_driver(USB_DRIVER_AUDIO, (usb_audio == 1) || (usb_audio == 3)); // while "always" or "only in mass-storage mode"
@@ -923,6 +932,19 @@ void usb_set_hid(bool enable)
 #endif /* USB_ENABLE_HID */
 
 #ifdef USB_ENABLE_SERIAL
+#ifdef USB_ENABLE_BULK
+void usb_set_bulk(bool enable)
+{
+    usb_bulk = enable;
+    usb_core_enable_driver(USB_DRIVER_BULK, usb_bulk);
+}
+
+bool usb_get_bulk(void)
+{
+    return usb_bulk;
+}
+#endif
+
 void usb_set_serial(bool enable)
 {
     usb_serial = enable;
