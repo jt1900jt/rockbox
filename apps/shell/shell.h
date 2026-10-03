@@ -95,6 +95,8 @@ bool shell_np_info(struct np_info *np);
 
 /* Settings list, defined in shell_main.c and rendered through the normal list views. */
 int shell_settings_count(void);
+bool shell_show_clock(void);
+bool shell_show_battery_pct(void);
 const char *shell_settings_label(int i);
 const char *shell_settings_value(int i);
 

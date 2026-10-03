@@ -293,6 +293,8 @@ static void home_select(void)
 /* ---- settings ---- */
 
 enum setting_id {
+    SET_CLOCK,
+    SET_BATTERY_PCT,
     SET_SHUFFLE,
     SET_REPEAT,
     SET_USB_LINK,
@@ -302,12 +304,58 @@ enum setting_id {
 };
 
 static const char *const setting_labels[SET_COUNT] = {
+    [SET_CLOCK] = "Clock in Status Bar",
+    [SET_BATTERY_PCT] = "Battery Percentage",
     [SET_SHUFFLE] = "Shuffle",
     [SET_REPEAT] = "Repeat",
     [SET_USB_LINK] = "USB Link",
     [SET_BENCHMARK] = "Benchmark",
     [SET_ROCKBOX] = "Rockbox Menu",
 };
+
+/* Shell display options. Stored alongside the library so they survive a firmware
+ * update, which replaces .rockbox wholesale. */
+struct shell_prefs {
+    uint32_t magic;
+    uint8_t clock;
+    uint8_t battery_pct;
+    uint8_t reserved[2];
+};
+#define PREFS_MAGIC 0x50534F49 /* "IOSP" */
+#define PREFS_PATH SHELL_DIR "/prefs.bin"
+
+static struct shell_prefs prefs = { PREFS_MAGIC, 1, 1, { 0, 0 } };
+
+static void prefs_load(void)
+{
+    struct shell_prefs got;
+    int fd = open(PREFS_PATH, O_RDONLY);
+    if (fd < 0)
+        return;
+    bool ok = read(fd, &got, sizeof got) == (ssize_t)sizeof got;
+    close(fd);
+    if (ok && got.magic == PREFS_MAGIC)
+        prefs = got;
+}
+
+static void prefs_save(void)
+{
+    int fd = open(PREFS_PATH, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd < 0)
+        return;
+    write(fd, &prefs, sizeof prefs);
+    close(fd);
+}
+
+bool shell_show_clock(void)
+{
+    return prefs.clock != 0;
+}
+
+bool shell_show_battery_pct(void)
+{
+    return prefs.battery_pct != 0;
+}
 
 /* Entries that depend on hardware state are hidden rather than shown disabled. */
 static bool setting_visible(int id)
@@ -350,6 +398,10 @@ const char *shell_settings_value(int row)
     static const char *const repeat_names[] = { "Off", "All", "One", "Shuffle", "A-B" };
     int id = setting_at(row);
     switch (id) {
+    case SET_CLOCK:
+        return prefs.clock ? "On" : "Off";
+    case SET_BATTERY_PCT:
+        return prefs.battery_pct ? "On" : "Off";
     case SET_SHUFFLE:
         return global_settings.playlist_shuffle ? "On" : "Off";
     case SET_REPEAT:
@@ -363,6 +415,14 @@ const char *shell_settings_value(int row)
 static void settings_select(int row)
 {
     switch (setting_at(row)) {
+    case SET_CLOCK:
+        prefs.clock = !prefs.clock;
+        prefs_save();
+        break;
+    case SET_BATTERY_PCT:
+        prefs.battery_pct = !prefs.battery_pct;
+        prefs_save();
+        break;
     case SET_SHUFFLE:
         global_settings.playlist_shuffle = !global_settings.playlist_shuffle;
         settings_save();
@@ -658,6 +718,7 @@ void shell_main(void)
     FOR_NB_SCREENS(i)
         viewportmanager_theme_enable(i, false, NULL);
     input_init();
+    prefs_load();
     shell_link_setup();
 
     if (!gfx_init()) {
@@ -689,6 +750,8 @@ void shell_main(void)
         }
         if (art_take_dirty())
             mark_full(); /* art arrived: repaint so it appears */
+        else if (a == A_TIMEOUT && (shell_show_clock() || shell_show_battery_pct()))
+            mark_full(); /* keep the status bar readouts current */
         handle(a);
 
         /* Drain anything that arrived while we were drawing, so a fast wheel does not

@@ -8,6 +8,7 @@
 #include "metadata.h"
 #include "playlist.h"
 #include "settings.h"
+#include "timefuncs.h"
 #include "power.h"
 #include "powermgmt.h"
 #include "string-extra.h"
@@ -49,26 +50,55 @@ int draw_rows_visible(void)
 
 void draw_status(const char *title, bool can_go_back)
 {
-    char up[96];
+    char up[96], buf[16];
     gfx_fill(0, 0, LCD_WIDTH, STATUS_H, C_BG);
-    if (can_go_back)
-        gfx_icon_chevron_left(SIDE, (STATUS_H - 10) / 2, C_FG);
-
-    gfx_upper(up, sizeof up, title);
     int cy = (STATUS_H - gfx_line_height(F_CAPS)) / 2 + gfx_ascent(F_CAPS);
-    gfx_text_center(F_CAPS, LCD_WIDTH / 2, cy, 180, up, C_FG);
 
+    int left = SIDE;
+    if (can_go_back) {
+        gfx_icon_chevron_left(left, (STATUS_H - 10) / 2, C_FG);
+        left += 12;
+    }
+    if (shell_show_clock()) {
+        struct tm *t = get_time();
+        if (t) {
+            int hour = t->tm_hour;
+            if (global_settings.timeformat) { /* 12 hour */
+                hour = hour % 12;
+                if (hour == 0)
+                    hour = 12;
+            }
+            snprintf(buf, sizeof buf, "%d:%02d", hour, t->tm_min);
+            gfx_text(F_CAPS, left + 2, cy, buf, C_SUB);
+        }
+    }
+
+    /* Battery sits at the right edge; the readout, when shown, goes to its left. */
     int bx = LCD_WIDTH - SIDE - 20;
-    gfx_icon_battery(bx, (STATUS_H - 9) / 2, battery_level(), charger_inserted(), C_SUB);
+    int pct = battery_level();
+    gfx_icon_battery(bx, (STATUS_H - 9) / 2, pct, charger_inserted(), C_SUB);
+    int right = bx;
+    if (shell_show_battery_pct()) {
+        snprintf(buf, sizeof buf, "%d%%", pct < 0 ? 0 : pct);
+        right -= gfx_width(F_CAPS, buf) + 5;
+        gfx_text(F_CAPS, right, cy, buf, C_SUB);
+    }
 
     int st = audio_status();
     if (st & AUDIO_STATUS_PLAY) {
         int gy = (STATUS_H - 10) / 2;
+        right -= 14;
         if (st & AUDIO_STATUS_PAUSE)
-            gfx_icon_pause(bx - 14, gy, C_SUB);
+            gfx_icon_pause(right, gy, C_SUB);
         else
-            gfx_icon_play(bx - 14, gy, C_SUB);
+            gfx_icon_play(right, gy, C_SUB);
     }
+
+    /* Centre the title in what is left, so it never collides with either side. */
+    gfx_upper(up, sizeof up, title);
+    int avail = (right - left) - 12;
+    if (avail > 40)
+        gfx_text_center(F_CAPS, (left + right) / 2, cy, avail, up, C_FG);
 }
 
 /* ---- list ---- */
