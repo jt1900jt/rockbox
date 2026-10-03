@@ -97,6 +97,9 @@ bool shell_np_info(struct np_info *np);
 int shell_settings_count(void);
 bool shell_show_clock(void);
 bool shell_show_battery_pct(void);
+/* True while the wheel adjusts volume, i.e. on Now Playing. */
+bool shell_status_volume(void);
+int shell_volume_percent(void);
 const char *shell_settings_label(int i);
 const char *shell_settings_value(int i);
 

@@ -73,15 +73,25 @@ void draw_status(const char *title, bool can_go_back)
         }
     }
 
-    /* Battery sits at the right edge; the readout, when shown, goes to its left. */
-    int bx = LCD_WIDTH - SIDE - 20;
-    int pct = battery_level();
-    gfx_icon_battery(bx, (STATUS_H - 9) / 2, pct, charger_inserted(), C_SUB);
+    /* Battery sits at the right edge, with the percentage printed inside the cell. */
+    int bx = LCD_WIDTH - SIDE - GFX_BATTERY_W;
     int right = bx;
-    if (shell_show_battery_pct()) {
-        snprintf(buf, sizeof buf, "%d%%", pct < 0 ? 0 : pct);
-        right -= gfx_width(F_CAPS, buf) + 5;
-        gfx_text(F_CAPS, right, cy, buf, C_SUB);
+    if (shell_show_battery_pct())
+        gfx_icon_battery(bx, (STATUS_H - GFX_BATTERY_H) / 2, battery_level(), charger_inserted(), C_SUB);
+    else
+        right = LCD_WIDTH - SIDE;
+
+    /* Volume, shown where the wheel actually controls it. */
+    if (shell_status_volume()) {
+        const int vw = 40;
+        right -= vw + 6;
+        int y = (STATUS_H - 3) / 2;
+        gfx_fill(right, y, vw, 3, C_TRACK);
+        int lvl = shell_volume_percent();
+        if (lvl > 0)
+            gfx_fill(right, y, vw * lvl / 100, 3, C_FG);
+        right -= 16;
+        gfx_icon_speaker(right, (STATUS_H - 10) / 2, C_SUB);
     }
 
     int st = audio_status();
@@ -97,11 +107,18 @@ void draw_status(const char *title, bool can_go_back)
     /* Keep the title centred on the screen: reserve the same width on both sides,
      * taken from whichever side needs more, so enabling the battery readout does
      * not shove the title off-centre. */
+    /* Centre the title on screen when the symmetric space allows it, so enabling the
+     * battery readout does not shove it sideways; fall back to centring in the gap
+     * rather than truncating when the sides are busy. */
     gfx_upper(up, sizeof up, title);
-    int need = MAX(left - 0, LCD_WIDTH - right);
-    int avail = LCD_WIDTH - 2 * need - 12;
-    if (avail > 40)
-        gfx_text_center(F_CAPS, LCD_WIDTH / 2, cy, avail, up, C_FG);
+    int need = MAX(left, LCD_WIDTH - right);
+    int symmetric = LCD_WIDTH - 2 * need - 10;
+    int gap = right - left - 10;
+    int tw = gfx_width(F_CAPS, up);
+    if (tw <= symmetric)
+        gfx_text_center(F_CAPS, LCD_WIDTH / 2, cy, symmetric, up, C_FG);
+    else if (gap > 40)
+        gfx_text_center(F_CAPS, (left + right) / 2, cy, gap, up, C_FG);
 }
 
 /* ---- list ---- */

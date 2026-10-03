@@ -17,6 +17,7 @@
 #include "root_menu.h"
 #include "screen_access.h"
 #include "settings.h"
+#include "sound.h"
 #include "viewport.h"
 
 #include "shell.h"
@@ -357,6 +358,22 @@ bool shell_show_battery_pct(void)
     return prefs.battery_pct != 0;
 }
 
+bool shell_status_volume(void)
+{
+    return depth > 0 && stack[depth - 1].kind == V_NOW_PLAYING;
+}
+
+int shell_volume_percent(void)
+{
+    int lo = sound_min(SOUND_VOLUME), hi = sound_max(SOUND_VOLUME);
+    int v = global_status.volume;
+    if (hi <= lo)
+        return 0;
+    if (v < lo) v = lo;
+    if (v > hi) v = hi;
+    return (v - lo) * 100 / (hi - lo);
+}
+
 /* Entries that depend on hardware state are hidden rather than shown disabled. */
 static bool setting_visible(int id)
 {
@@ -644,8 +661,8 @@ static void handle(enum action a)
     if (v->kind == V_NOW_PLAYING) {
         struct mp3entry *id3 = audio_current_track();
         switch (a) {
-        case A_UP:   adjust_volume(-1); break;
-        case A_DOWN: adjust_volume(1); break;
+        case A_UP:   adjust_volume(-1); mark_full(); break;
+        case A_DOWN: adjust_volume(1); mark_full(); break;
         case A_NEXT: audio_next(); mark_full(); break;
         case A_PREV:
             if (id3 && id3->elapsed > 3000)

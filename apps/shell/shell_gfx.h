@@ -54,6 +54,8 @@ const ipfn_font *gfx_font(enum gfx_face face);
 /* Dirty-rect tracking: mark what changed, then flush once per frame. */
 void gfx_dirty(int x, int y, int w, int h);
 void gfx_dirty_all(void);
+void gfx_clip(int x, int y, int w, int h);
+void gfx_clip_reset(void);
 void gfx_flush(void);
 
 void gfx_fill(int x, int y, int w, int h, uint16_t color);
@@ -97,8 +99,12 @@ void gfx_icon_play(int x, int y, uint16_t color);
 void gfx_icon_pause(int x, int y, uint16_t color);
 void gfx_icon_prev(int x, int y, uint16_t color);
 void gfx_icon_next(int x, int y, uint16_t color);
+/* Battery with the percentage printed inside the cell. */
 void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color);
+#define GFX_BATTERY_W 32
+#define GFX_BATTERY_H 15
 void gfx_icon_headphones(int x, int y, uint16_t color);
+void gfx_icon_speaker(int x, int y, uint16_t color);
 void gfx_icon_shuffle(int x, int y, uint16_t color);
 void gfx_icon_repeat(int x, int y, bool one, uint16_t color);
 

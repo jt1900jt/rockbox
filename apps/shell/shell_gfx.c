@@ -33,6 +33,21 @@ static int font_handles[F_COUNT];
 static gfx_rect dirty;
 static bool dirty_any;
 
+/* Optional clip rect, used when the same text is drawn twice in two colours. */
+static gfx_rect clip_rect = { 0, 0, LCD_WIDTH, LCD_HEIGHT };
+
+void gfx_clip(int x, int y, int w, int h)
+{
+    if (w < 0) w = 0;
+    if (h < 0) h = 0;
+    clip_rect.x = x; clip_rect.y = y; clip_rect.w = w; clip_rect.h = h;
+}
+
+void gfx_clip_reset(void)
+{
+    clip_rect.x = 0; clip_rect.y = 0; clip_rect.w = LCD_WIDTH; clip_rect.h = LCD_HEIGHT;
+}
+
 bool gfx_init(void)
 {
     char path[MAX_PATH];
@@ -113,10 +128,16 @@ void gfx_flush(void)
 
 static inline bool clip(int *x, int *y, int *w, int *h)
 {
-    if (*x < 0) { *w += *x; *x = 0; }
-    if (*y < 0) { *h += *y; *y = 0; }
-    if (*x + *w > LCD_WIDTH) *w = LCD_WIDTH - *x;
-    if (*y + *h > LCD_HEIGHT) *h = LCD_HEIGHT - *y;
+    int cx = clip_rect.x, cy = clip_rect.y;
+    int cr = clip_rect.x + clip_rect.w, cb = clip_rect.y + clip_rect.h;
+    if (cx < 0) cx = 0;
+    if (cy < 0) cy = 0;
+    if (cr > LCD_WIDTH) cr = LCD_WIDTH;
+    if (cb > LCD_HEIGHT) cb = LCD_HEIGHT;
+    if (*x < cx) { *w -= cx - *x; *x = cx; }
+    if (*y < cy) { *h -= cy - *y; *y = cy; }
+    if (*x + *w > cr) *w = cr - *x;
+    if (*y + *h > cb) *h = cb - *y;
     return *w > 0 && *h > 0;
 }
 
@@ -360,12 +381,16 @@ static int draw_run(const ipfn_font *f, int x, int y, const char *s, size_t n, u
             int gx = x + g.left, gy = y - g.top;
             for (int row = 0; row < g.h; row++) {
                 int py = gy + row;
+                if (py < clip_rect.y || py >= clip_rect.y + clip_rect.h)
+                    continue;
                 if (py < 0 || py >= LCD_HEIGHT)
                     continue;
                 const uint8_t *cov = g.bitmap + row * g.w;
                 for (int col = 0; col < g.w; col++) {
                     int px = gx + col;
-                    if (px < 0 || px >= LCD_WIDTH || !cov[col])
+                    if (px < clip_rect.x || px >= clip_rect.x + clip_rect.w || !cov[col])
+                        continue;
+                    if (px < 0 || px >= LCD_WIDTH)
                         continue;
                     uint16_t *d = &FB(px, py);
                     *d = blend565(*d, color, cov[col]);
@@ -482,34 +507,59 @@ void gfx_icon_next(int x, int y, uint16_t color)
 
 void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color)
 {
-    const int w = 18, h = 9;
-    gfx_hline(x, y, w, color);
-    gfx_hline(x, y + h - 1, w, color);
-    gfx_vline(x, y, h, color);
-    gfx_vline(x + w - 1, y, h, color);
-    gfx_fill(x + w, y + 3, 2, 3, color);
+    const int w = GFX_BATTERY_W - 3, h = GFX_BATTERY_H;
+    char buf[8];
+
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
+
+    /* cell outline plus the terminal nub */
+    gfx_hline(x + 2, y, w - 4, color);
+    gfx_hline(x + 2, y + h - 1, w - 4, color);
+    gfx_vline(x, y + 2, h - 4, color);
+    gfx_vline(x + w - 1, y + 2, h - 4, color);
+    gfx_fill(x + 1, y + 1, 1, 1, color);
+    gfx_fill(x + w - 2, y + 1, 1, 1, color);
+    gfx_fill(x + 1, y + h - 2, 1, 1, color);
+    gfx_fill(x + w - 2, y + h - 2, 1, 1, color);
+    gfx_fill(x + w + 1, y + 5, 2, h - 10, color);
+
+    /* The charge level fills from the left; the reading sits on top, flipping to the
+     * background colour over the filled part so it stays legible either way. */
     int fill = (w - 4) * percent / 100;
     if (fill > 0)
         gfx_fill(x + 2, y + 2, fill, h - 4, color);
-    if (charging) {
-        /* a small bolt over the fill */
-        for (int i = 0; i < 3; i++) {
-            gfx_fill(x + w / 2 - i / 2, y + 2 + i, 1, 1, C_BG);
-            gfx_fill(x + w / 2 + 1 - i / 2, y + h - 3 - i, 1, 1, C_BG);
-        }
-    }
+
+    snprintf(buf, sizeof buf, "%d", percent);
+    int tw = gfx_width(F_CAPS, buf);
+    int tx = x + (w - tw) / 2;
+    int ty = y + (h + gfx_ascent(F_CAPS)) / 2 - 1;
+    /* draw twice, clipped to the filled and unfilled halves */
+    int split = x + 2 + fill;
+    gfx_clip(x + 1, y + 1, split - (x + 1), h - 2);
+    gfx_text(F_CAPS, tx, ty, buf, C_BG);
+    gfx_clip(split, y + 1, (x + w - 1) - split, h - 2);
+    gfx_text(F_CAPS, tx, ty, buf, color);
+    gfx_clip_reset();
+
+    if (charging)
+        gfx_fill(x + w + 1, y + 5, 2, h - 10, C_FG);
 }
 
-/* Two crossing arrows, 14x10. */
+void gfx_icon_speaker(int x, int y, uint16_t color)
+{
+    gfx_fill(x, y + 3, 3, 4, color);
+    for (int i = 0; i < 4; i++)
+        gfx_fill(x + 3 + i, y + 3 - i, 1, 4 + i * 2, color);
+}
+
+/* Two crossing arrows. */
 void gfx_icon_shuffle(int x, int y, uint16_t color)
 {
     for (int i = 0; i < 9; i++) {
         gfx_fill(x + 1 + i, y + 1 + i * 7 / 8, 1, 1, color);
         gfx_fill(x + 1 + i, y + 8 - i * 7 / 8, 1, 1, color);
     }
-    /* arrowheads on the right */
     gfx_fill(x + 10, y + 7, 3, 1, color);
     gfx_fill(x + 12, y + 5, 1, 3, color);
     gfx_fill(x + 10, y + 2, 3, 1, color);
