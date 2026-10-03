@@ -25,6 +25,7 @@
 #define C_SEL_FG    SHELL_RGB(11, 11, 12)
 #define C_SEL_SUB   SHELL_RGB(90, 90, 96)
 #define C_TRACK     SHELL_RGB(48, 48, 52)
+#define C_OFF       SHELL_RGB(96, 96, 100) /* inactive control: visible but clearly off */
 #define C_PLACEHOLD SHELL_RGB(32, 32, 36)
 #define C_HAIRLINE  SHELL_RGB(38, 38, 42)
 
@@ -98,5 +99,7 @@ void gfx_icon_prev(int x, int y, uint16_t color);
 void gfx_icon_next(int x, int y, uint16_t color);
 void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color);
 void gfx_icon_headphones(int x, int y, uint16_t color);
+void gfx_icon_shuffle(int x, int y, uint16_t color);
+void gfx_icon_repeat(int x, int y, bool one, uint16_t color);
 
 #endif

@@ -502,6 +502,33 @@ void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color)
     }
 }
 
+/* Two crossing arrows, 14x10. */
+void gfx_icon_shuffle(int x, int y, uint16_t color)
+{
+    for (int i = 0; i < 9; i++) {
+        gfx_fill(x + 1 + i, y + 1 + i * 7 / 8, 1, 1, color);
+        gfx_fill(x + 1 + i, y + 8 - i * 7 / 8, 1, 1, color);
+    }
+    /* arrowheads on the right */
+    gfx_fill(x + 10, y + 7, 3, 1, color);
+    gfx_fill(x + 12, y + 5, 1, 3, color);
+    gfx_fill(x + 10, y + 2, 3, 1, color);
+    gfx_fill(x + 12, y + 2, 1, 3, color);
+}
+
+/* A loop with an arrowhead; `one` adds the centre dot for repeat-one. */
+void gfx_icon_repeat(int x, int y, bool one, uint16_t color)
+{
+    gfx_fill(x + 2, y, 9, 1, color);
+    gfx_fill(x + 2, y + 9, 9, 1, color);
+    gfx_fill(x, y + 1, 1, 8, color);
+    gfx_fill(x + 12, y + 1, 1, 8, color);
+    gfx_fill(x + 9, y - 1, 1, 3, color);
+    gfx_fill(x + 10, y - 2, 1, 5, color);
+    if (one)
+        gfx_fill(x + 6, y + 4, 2, 2, color);
+}
+
 void gfx_icon_headphones(int x, int y, uint16_t color)
 {
     for (int i = 0; i < 9; i++) {

@@ -94,11 +94,14 @@ void draw_status(const char *title, bool can_go_back)
             gfx_icon_play(right, gy, C_SUB);
     }
 
-    /* Centre the title in what is left, so it never collides with either side. */
+    /* Keep the title centred on the screen: reserve the same width on both sides,
+     * taken from whichever side needs more, so enabling the battery readout does
+     * not shove the title off-centre. */
     gfx_upper(up, sizeof up, title);
-    int avail = (right - left) - 12;
+    int need = MAX(left - 0, LCD_WIDTH - right);
+    int avail = LCD_WIDTH - 2 * need - 12;
     if (avail > 40)
-        gfx_text_center(F_CAPS, (left + right) / 2, cy, avail, up, C_FG);
+        gfx_text_center(F_CAPS, LCD_WIDTH / 2, cy, avail, up, C_FG);
 }
 
 /* ---- list ---- */
@@ -268,29 +271,29 @@ void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint1
     const int top_pad = 6, bot_pad = 6;
     int avail = LCD_HEIGHT - STATUS_H - top_pad - bot_pad;
     int line = n > 0 ? avail / n : avail;
-    if (line > 26)
-        line = 26;
+    if (line > 34)
+        line = 34;
     int y0 = STATUS_H + top_pad + (avail - n * line) / 2;
     for (int i = 0; i < n; i++) {
         char up[32];
         gfx_upper(up, sizeof up, labels[i]);
         bool is_sel = i == sel;
-        enum gfx_face f = is_sel ? F_MENU_SEL : F_MENU;
+        enum gfx_face f = is_sel ? F_TITLE : F_MENU_SEL;
         int y = y0 + i * line + (line + gfx_ascent(f)) / 2 - 2;
         if (is_sel)
-            gfx_fill(SIDE + 2, y - gfx_ascent(f) / 2 - 1, 5, 5, C_FG);
-        gfx_text(f, SIDE + 14, y, up, is_sel ? C_FG : C_DIM);
+            gfx_fill(SIDE + 2, y - gfx_ascent(f) / 2 - 2, 6, 6, C_FG);
+        gfx_text(f, SIDE + 16, y, up, is_sel ? C_FG : C_DIM);
     }
 
     /* now-playing card on the right */
     struct mp3entry *id3 = (audio_status() & AUDIO_STATUS_PLAY) ? audio_current_track() : NULL;
     if (id3) {
-        const int cx = 196, cy = 44, cw = 110;
+        const int cx = 190, cy = 40, cw = 116;
         int w, h;
         const uint16_t *px = art_get(IPAP_LRGE, art_id, &w, &h);
         if (px && w >= cw && h >= cw) {
-            /* centre-crop the 116px art to the card */
-            static uint16_t tmp[110 * 110];
+            /* centre-crop the large art to the card */
+            static uint16_t tmp[116 * 116];
             int off = (w - cw) / 2;
             for (int r = 0; r < cw; r++)
                 memcpy(&tmp[r * cw], &px[(r + off) * w + off], cw * 2);
@@ -298,8 +301,8 @@ void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint1
         } else {
             gfx_fill_round(cx, cy, cw, cw, 4, swatch ? swatch : C_PLACEHOLD);
         }
-        gfx_text_fit(F_BODY, cx, cy + cw + 16, cw, id3->title ? id3->title : "", C_FG);
-        gfx_text_fit(F_SUB, cx, cy + cw + 30, cw, id3->artist ? id3->artist : "", C_SUB);
+        gfx_text_fit(F_ROW, cx, cy + cw + 18, cw, id3->title ? id3->title : "", C_FG);
+        gfx_text_fit(F_SUB, cx, cy + cw + 34, cw, id3->artist ? id3->artist : "", C_SUB);
     }
 }
 
@@ -409,15 +412,18 @@ void draw_now_playing(const struct np_info *np, bool full)
         gfx_icon_play(cx - 4, cy - 5, C_SEL_FG);
     else
         gfx_icon_pause(cx - 4, cy - 5, C_SEL_FG);
-    gfx_icon_prev(cx - 52, cy - 5, C_SUB);
-    gfx_icon_next(cx + 44, cy - 5, C_SUB);
+    gfx_icon_prev(cx - 50, cy - 5, C_SUB);
+    gfx_icon_next(cx + 42, cy - 5, C_SUB);
 
-    /* footer: playback mode on the left, format badge on the right */
+    /* Mode buttons sit outside the transport; lit when active. */
+    gfx_icon_shuffle(SIDE + 4, cy - 5,
+                     global_settings.playlist_shuffle ? C_FG : C_OFF);
+    bool rep = global_settings.repeat_mode != REPEAT_OFF;
+    gfx_icon_repeat(LCD_WIDTH - SIDE - 17, cy - 4,
+                    global_settings.repeat_mode == REPEAT_ONE,
+                    rep ? C_FG : C_OFF);
+
     int fy = LCD_HEIGHT - 12;
-    if (global_settings.playlist_shuffle)
-        gfx_text(F_CAPS, SIDE, fy, "SHUFFLE", C_SUB);
-    else if (global_settings.repeat_mode != REPEAT_OFF)
-        gfx_text(F_CAPS, SIDE, fy, "REPEAT", C_SUB);
     if (np->codec) {
         if (np->lossless)
             snprintf(buf, sizeof buf, "%s \xc2\xb7 %u/%lu", codec_name(np->codec), np->bits,

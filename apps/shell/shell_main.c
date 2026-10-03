@@ -231,14 +231,14 @@ struct home_item {
     bool link;
 };
 
+/* Now Playing leads the list while something is playing, so it is the first thing
+ * under the cursor on returning to Home. */
 static const struct home_item home_all[] = {
+    { "Now Playing", V_NOW_PLAYING, false, false, false },
     { "Playlists", V_PLAYLISTS, false, false, false },
     { "Artists", V_ARTISTS, false, false, false },
     { "Albums", V_ALBUMS, false, false, false },
     { "Songs", V_SONGS, false, false, false },
-    { "Genres", V_GENRES, false, false, false },
-    { "Composers", V_COMPOSERS, false, false, false },
-    { "Now Playing", V_NOW_PLAYING, false, false, false },
     { "Settings", V_SETTINGS, false, false, false },
 };
 #define HOME_ALL ((int)(sizeof home_all / sizeof home_all[0]))
@@ -682,6 +682,17 @@ static void handle(enum action a)
                 seeking = false;
                 audio_resume();
             }
+            break;
+        case A_SELECT: /* cycle shuffle, then repeat, as the stock centre button does */
+            if (!global_settings.playlist_shuffle) {
+                global_settings.playlist_shuffle = true;
+            } else {
+                global_settings.playlist_shuffle = false;
+                global_settings.repeat_mode = (global_settings.repeat_mode + 1) % NUM_REPEAT_MODES;
+                audio_flush_and_reload_tracks();
+            }
+            settings_save();
+            mark_full();
             break;
         default: break;
         }
