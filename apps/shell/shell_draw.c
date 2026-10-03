@@ -48,10 +48,30 @@ int draw_rows_visible(void)
 
 /* ---- status bar ---- */
 
+/* The status bar sits on top of the Now Playing wash, so repainting it alone cannot
+ * just fill with the background colour. The strip is saved on a full redraw and
+ * restored before each partial repaint. */
+static uint16_t status_bg[LCD_WIDTH * STATUS_H];
+static bool status_bg_valid;
+
+void draw_status_save(void)
+{
+    gfx_save(status_bg, 0, 0, LCD_WIDTH, STATUS_H);
+    status_bg_valid = true;
+}
+
+void draw_status_invalidate(void)
+{
+    status_bg_valid = false;
+}
+
 void draw_status(const char *title, bool can_go_back)
 {
     char up[96], buf[16];
-    gfx_fill(0, 0, LCD_WIDTH, STATUS_H, C_BG);
+    if (status_bg_valid)
+        gfx_blit(status_bg, 0, 0, LCD_WIDTH, STATUS_H);
+    else
+        gfx_fill(0, 0, LCD_WIDTH, STATUS_H, C_BG);
     int cy = (STATUS_H - gfx_line_height(F_CAPS)) / 2 + gfx_ascent(F_CAPS);
 
     int left = SIDE;
@@ -81,16 +101,13 @@ void draw_status(const char *title, bool can_go_back)
     else
         right = LCD_WIDTH - SIDE;
 
-    /* Volume, shown where the wheel actually controls it. */
+    /* Volume, shown where the wheel actually controls it. The number is the step
+     * index rescaled to 0-100, so a full sweep always reads 0 to 100. */
     if (shell_status_volume()) {
-        const int vw = 40;
-        right -= vw + 6;
-        int y = (STATUS_H - 3) / 2;
-        gfx_fill(right, y, vw, 3, C_TRACK);
-        int lvl = shell_volume_percent();
-        if (lvl > 0)
-            gfx_fill(right, y, vw * lvl / 100, 3, C_FG);
-        right -= 16;
+        snprintf(buf, sizeof buf, "%d", shell_volume_percent());
+        right -= gfx_width(F_CAPS, buf) + 6;
+        gfx_text(F_CAPS, right, cy, buf, C_FG);
+        right -= 12;
         gfx_icon_speaker(right, (STATUS_H - 10) / 2, C_SUB);
     }
 
@@ -417,6 +434,7 @@ void draw_now_playing(const struct np_info *np, bool full)
     snprintf(buf, sizeof buf, "%d of %d", playlist_get_display_index(), playlist_amount());
     gfx_text(F_CAPS, NP_TEXT_X, NP_ART_Y + 90, buf, C_SUB);
 
+    draw_status_save();
     gfx_save(prog_bg, PROG_X, BAR_Y, PROG_W, PROG_H);
     prog_bg_valid = true;
     draw_progress(id3);
@@ -432,13 +450,12 @@ void draw_now_playing(const struct np_info *np, bool full)
     gfx_icon_prev(cx - 50, cy - 5, C_SUB);
     gfx_icon_next(cx + 42, cy - 5, C_SUB);
 
-    /* Mode buttons sit outside the transport; lit when active. */
-    gfx_icon_shuffle(SIDE + 4, cy - 5,
-                     global_settings.playlist_shuffle ? C_FG : C_OFF);
+    /* Mode indicators: S for shuffle, R (R1 for repeat-one) for repeat. Lit when on. */
+    int my = cy + gfx_ascent(F_ROW) / 2;
+    gfx_text(F_ROW, SIDE + 4, my, "S", global_settings.playlist_shuffle ? C_FG : C_OFF);
     bool rep = global_settings.repeat_mode != REPEAT_OFF;
-    gfx_icon_repeat(LCD_WIDTH - SIDE - 17, cy - 4,
-                    global_settings.repeat_mode == REPEAT_ONE,
-                    rep ? C_FG : C_OFF);
+    const char *rlabel = global_settings.repeat_mode == REPEAT_ONE ? "R1" : "R";
+    gfx_text_right(F_ROW, LCD_WIDTH - SIDE - 4, my, rlabel, rep ? C_FG : C_OFF);
 
     int fy = LCD_HEIGHT - 12;
     if (np->codec) {

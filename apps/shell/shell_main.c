@@ -44,11 +44,27 @@ static bool need_full = true;
 static int drawn_sel = -1, drawn_top = -1;
 static bool seeking;
 static long seek_pos, seek_start;
+static bool volume_dirty;
+
+/* Wheel acceleration: clicks arriving in quick succession move more than one step,
+ * so a single sweep covers the range without losing fine control when turned slowly. */
+static int wheel_step(void)
+{
+    static long last_tick;
+    long gap = current_tick - last_tick;
+    last_tick = current_tick;
+    if (gap <= 1)
+        return 4;
+    if (gap <= 3)
+        return 2;
+    return 1;
+}
 
 static void mark_full(void)
 {
     need_full = true;
     drawn_sel = drawn_top = -1;
+    draw_status_invalidate();
 }
 
 /* ---- library ---- */
@@ -363,15 +379,21 @@ bool shell_status_volume(void)
     return depth > 0 && stack[depth - 1].kind == V_NOW_PLAYING;
 }
 
+/* The hardware range is about 80 steps; report it as 0-100 so a full sweep of the
+ * wheel reads the way people expect. */
 int shell_volume_percent(void)
 {
     int lo = sound_min(SOUND_VOLUME), hi = sound_max(SOUND_VOLUME);
-    int v = global_status.volume;
-    if (hi <= lo)
+    int step = sound_steps(SOUND_VOLUME);
+    if (step <= 0)
+        step = 1;
+    int steps = (hi - lo) / step;
+    if (steps <= 0)
         return 0;
+    int v = global_status.volume;
     if (v < lo) v = lo;
     if (v > hi) v = hi;
-    return (v - lo) * 100 / (hi - lo);
+    return ((v - lo) / step * 100 + steps / 2) / steps;
 }
 
 /* Entries that depend on hardware state are hidden rather than shown disabled. */
@@ -577,8 +599,14 @@ static void render(void)
     case V_NOW_PLAYING: {
         struct np_info np;
         shell_np_info(&np);
+        if (!need_full && volume_dirty) {
+            draw_status(view_title(v), true);
+            volume_dirty = false;
+            break;
+        }
         draw_now_playing(&np, need_full);
         need_full = false;
+        volume_dirty = false;
         break;
     }
 
@@ -661,8 +689,16 @@ static void handle(enum action a)
     if (v->kind == V_NOW_PLAYING) {
         struct mp3entry *id3 = audio_current_track();
         switch (a) {
-        case A_UP:   adjust_volume(-1); mark_full(); break;
-        case A_DOWN: adjust_volume(1); mark_full(); break;
+        case A_UP:
+        case A_DOWN: {
+            /* A full repaint per click (~26 ms on the 7G) is slower than the wheel
+             * emits events, so clicks were being dropped and the volume crawled.
+             * Repaint just the status bar and let a fast spin move several steps. */
+            int step = wheel_step();
+            adjust_volume(a == A_DOWN ? step : -step);
+            volume_dirty = true;
+            break;
+        }
         case A_NEXT: audio_next(); mark_full(); break;
         case A_PREV:
             if (id3 && id3->elapsed > 3000)

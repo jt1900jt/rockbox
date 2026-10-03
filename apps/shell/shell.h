@@ -81,6 +81,9 @@ void view_prepare(struct view *v);        /* called once when a view is pushed *
 /* shell_draw.c */
 int draw_rows_visible(void);
 void draw_status(const char *title, bool can_go_back);
+/* Save the status strip for partial repaints; invalidate when the screen changes. */
+void draw_status_save(void);
+void draw_status_invalidate(void);
 void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint16_t swatch);
 void draw_list(const struct view *v, bool full);
 void draw_list_rows(const struct view *v, int old_sel, int new_sel);
