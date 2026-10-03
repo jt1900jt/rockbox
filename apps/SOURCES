@@ -27,6 +27,7 @@ shell/shell_draw.c
 shell/shell_input.c
 shell/shell_bench.c
 shell/shell_link.c
+shell/shell_journal.c
 shell/link_proto.c
 #endif
 menu.c

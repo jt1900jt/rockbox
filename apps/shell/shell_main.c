@@ -23,6 +23,7 @@
 #include "shell.h"
 #include "shell_art.h"
 #include "shell_gfx.h"
+#include "shell_journal.h"
 #include "shell_main.h"
 #include "string-extra.h"
 
@@ -199,6 +200,9 @@ static bool playing(void)
 
 /* The DB is sorted by title, not path, so finding the playing track is a linear scan.
  * It runs once per track change, not per frame. */
+static uint32_t current_uid = IPDB_NONE;
+static uint32_t last_elapsed, last_length;
+
 bool shell_np_info(struct np_info *np)
 {
     static char last_path[MAX_PATH];
@@ -230,12 +234,41 @@ bool shell_np_info(struct np_info *np)
             cached.codec = t->codec;
             cached.bits = t->bits;
             cached.lossless = (t->flags & IPDB_TF_LOSSLESS) != 0;
+            cached.uid = t->uid;
             cached_ok = true;
             break;
         }
     }
     *np = cached;
     return cached_ok;
+}
+
+/* The library is read-only, so what happened on the device goes into the journal for
+ * the companion to merge. Watch for the track changing rather than hooking playback,
+ * which keeps this out of the audio path. */
+static void journal_poll(void)
+{
+    struct mp3entry *id3 = audio_current_track();
+    struct np_info np;
+    bool have = shell_np_info(&np);
+    uint32_t uid = have ? np.uid : IPDB_NONE;
+
+    if (uid != current_uid) {
+        if (current_uid != IPDB_NONE)
+            journal_track_finished(current_uid, last_elapsed, last_length);
+        current_uid = uid;
+        last_elapsed = last_length = 0;
+    }
+    /* Track the furthest point reached, not the latest sample: by the time a track
+     * change is noticed the engine has already reset elapsed for the new track, which
+     * would make every completed track look like a skip. */
+    if (id3) {
+        uint32_t el = (uint32_t)id3->elapsed;
+        if (el > last_elapsed)
+            last_elapsed = el;
+        if (id3->length)
+            last_length = (uint32_t)id3->length;
+    }
 }
 
 /* ---- home ---- */
@@ -801,6 +834,15 @@ void shell_main(void)
         enter_rockbox_ui();
     }
     art_init(shell_db.generation);
+    journal_init();
+
+    /* Pick up where the last session stopped, as the stock firmware does. */
+    if (global_status.resume_index != -1) {
+        if (playlist_resume() != -1) {
+            playlist_resume_track(global_status.resume_index, global_status.resume_crc32,
+                                  global_status.resume_elapsed, global_status.resume_offset);
+        }
+    }
 
     reset_to_home();
     for (;;) {
@@ -812,6 +854,7 @@ void shell_main(void)
 #endif
             continue;
         }
+        journal_poll();
         if (art_take_dirty())
             mark_full(); /* art arrived: repaint so it appears */
         else if (a == A_TIMEOUT && (shell_show_clock() || shell_show_battery_pct()))

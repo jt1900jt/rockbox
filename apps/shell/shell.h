@@ -57,6 +57,7 @@ struct row {
 
 /* What Now Playing needs from the library for the current track. */
 struct np_info {
+    uint32_t uid;
     uint32_t art_id;
     uint16_t colors[3];
     uint32_t sample_rate;
