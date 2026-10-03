@@ -7,6 +7,7 @@
 #include "audio.h"
 #include "metadata.h"
 #include "playlist.h"
+#include "settings.h"
 #include "power.h"
 #include "powermgmt.h"
 #include "string-extra.h"
@@ -31,7 +32,7 @@
 #define NP_ART_X   14
 #define NP_ART_Y   30
 #define NP_TEXT_X  (NP_ART_X + NP_ART + 14)
-#define BAR_Y      164
+#define BAR_Y      158
 #define BAR_H      3
 
 static int rows_visible(void)
@@ -296,7 +297,7 @@ static const char *codec_name(uint8_t c)
  * the strip is saved once per full redraw and restored before each tick. */
 #define PROG_X NP_ART_X
 #define PROG_W (LCD_WIDTH - 2 * NP_ART_X)
-#define PROG_H 22
+#define PROG_H 20
 static uint16_t prog_bg[PROG_W * PROG_H];
 static bool prog_bg_valid;
 
@@ -359,20 +360,20 @@ void draw_now_playing(const struct np_info *np, bool full)
         gfx_fill_round(NP_ART_X, NP_ART_Y, NP_ART, NP_ART, 4, np->colors[0] ? np->colors[0] : C_PLACEHOLD);
 
     int tw = LCD_WIDTH - NP_TEXT_X - SIDE;
-    gfx_text_fit(F_CAPS, NP_TEXT_X, NP_ART_Y + 12, tw, "NOW PLAYING", C_SUB);
-    gfx_text_fit(F_TITLE, NP_TEXT_X, NP_ART_Y + 38, tw, id3->title ? id3->title : "", C_FG);
-    gfx_text_fit(F_BODY, NP_TEXT_X, NP_ART_Y + 56, tw, id3->artist ? id3->artist : "", C_FG);
-    gfx_text_fit(F_SUB, NP_TEXT_X, NP_ART_Y + 72, tw, id3->album ? id3->album : "", C_SUB);
+    gfx_text_fit(F_TITLE, NP_TEXT_X, NP_ART_Y + 22, tw, id3->title ? id3->title : "", C_FG);
+    gfx_text_fit(F_ROW, NP_TEXT_X, NP_ART_Y + 44, tw, id3->artist ? id3->artist : "", C_FG);
+    gfx_text_fit(F_BODY, NP_TEXT_X, NP_ART_Y + 63, tw, id3->album ? id3->album : "", C_SUB);
 
     snprintf(buf, sizeof buf, "%d of %d", playlist_get_display_index(), playlist_amount());
-    gfx_text(F_CAPS, NP_TEXT_X, NP_ART_Y + 98, buf, C_SUB);
+    gfx_text(F_CAPS, NP_TEXT_X, NP_ART_Y + 90, buf, C_SUB);
 
     gfx_save(prog_bg, PROG_X, BAR_Y, PROG_W, PROG_H);
     prog_bg_valid = true;
     draw_progress(id3);
 
-    /* transport: a filled circle with the current state, flanked by skip glyphs */
-    int cy = 196, cx = LCD_WIDTH / 2;
+    /* transport: a filled circle with the current state, flanked by skip glyphs.
+     * Kept clear of the progress strip, which is restored on every tick. */
+    int cy = 199, cx = LCD_WIDTH / 2;
     gfx_fill_round(cx - 15, cy - 15, 30, 30, 15, C_FG);
     if (audio_status() & AUDIO_STATUS_PAUSE)
         gfx_icon_play(cx - 4, cy - 5, C_SEL_FG);
@@ -381,10 +382,12 @@ void draw_now_playing(const struct np_info *np, bool full)
     gfx_icon_prev(cx - 52, cy - 5, C_SUB);
     gfx_icon_next(cx + 44, cy - 5, C_SUB);
 
-    /* footer: output on the left, format badge on the right */
+    /* footer: playback mode on the left, format badge on the right */
     int fy = LCD_HEIGHT - 12;
-    gfx_icon_headphones(SIDE, fy - 8, C_SUB);
-    gfx_text(F_CAPS, SIDE + 14, fy, "HEADPHONES", C_SUB);
+    if (global_settings.playlist_shuffle)
+        gfx_text(F_CAPS, SIDE, fy, "SHUFFLE", C_SUB);
+    else if (global_settings.repeat_mode != REPEAT_OFF)
+        gfx_text(F_CAPS, SIDE, fy, "REPEAT", C_SUB);
     if (np->codec) {
         if (np->lossless)
             snprintf(buf, sizeof buf, "%s \xc2\xb7 %u/%lu", codec_name(np->codec), np->bits,

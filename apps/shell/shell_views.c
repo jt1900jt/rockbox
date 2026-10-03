@@ -31,6 +31,7 @@ int view_count(const struct view *v)
     case V_GENRES:              return (int)db->n_genres;
     case V_COMPOSERS:           return (int)db->n_composers;
     case V_PLAYLISTS:           return (int)db->n_playlists;
+    case V_SETTINGS:            return shell_settings_count();
     case V_ALBUM_TRACKS:        return (int)db->albums[v->arg].tracks_count;
     case V_ARTIST_ALBUMS:       return (int)db->artists[v->arg].count;
     case V_ARTIST_ALBUM_TRACKS: return n_filtered;
@@ -104,6 +105,14 @@ void view_row(const struct view *v, int i, struct row *r)
         return;
     }
 
+    if (v->kind == V_SETTINGS) {
+        r->title = shell_settings_label(i);
+        const char *val = shell_settings_value(i);
+        if (val)
+            snprintf(r->subbuf, sizeof r->subbuf, "%s", val);
+        return;
+    }
+
     switch (v->kind) {
     case V_ALBUMS:
     case V_ARTIST_ALBUMS: {
@@ -162,6 +171,7 @@ const char *view_title(const struct view *v)
     case V_COMPOSER_TRACKS:     return ipdb_str(db, db->composers[v->arg].name);
     case V_PLAYLIST_TRACKS:     return ipdb_str(db, db->playlists[v->arg].name);
     case V_NOW_PLAYING:         return "Now Playing";
+    case V_SETTINGS:            return "Settings";
     default:                    return "";
     }
 }

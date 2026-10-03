@@ -33,6 +33,7 @@ enum view_kind {
     V_COMPOSER_TRACKS,     /* arg = composer */
     V_PLAYLIST_TRACKS,     /* arg = playlist */
     V_NOW_PLAYING,
+    V_SETTINGS,
 };
 
 struct view {
@@ -92,6 +93,11 @@ void format_duration(char *buf, int len, uint32_t ms);
 /* Fills np from the library for the track currently playing. */
 bool shell_np_info(struct np_info *np);
 
+/* Settings list, defined in shell_main.c and rendered through the normal list views. */
+int shell_settings_count(void);
+const char *shell_settings_label(int i);
+const char *shell_settings_value(int i);
+
 /* shell_bench.c */
 extern long shell_boot_tick;
 bool shell_bench_available(void);
@@ -114,7 +120,10 @@ enum action {
     A_PLAY,
     A_PREV,
     A_NEXT,
-    A_USB,     /* USB session ended: library may have changed */
+    A_SEEK_BACK,
+    A_SEEK_FWD,
+    A_SEEK_END, /* seek key released */
+    A_USB,      /* USB session ended: library may have changed */
     A_QUIT,    /* simulator script finished */
 };
 void input_init(void);

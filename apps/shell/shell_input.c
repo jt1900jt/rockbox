@@ -82,6 +82,9 @@ static enum action script_next(void)
         case 'p': return A_PLAY;
         case 'l': return A_PREV;
         case 'r': return A_NEXT;
+        case 'L': return A_SEEK_BACK;
+        case 'R': return A_SEEK_FWD;
+        case 'E': return A_SEEK_END;
         case 'q': return A_QUIT;
         default:  continue;
         }
@@ -135,11 +138,17 @@ enum action input_get(int timeout_ticks)
     case BUTTON_PLAY:
         return A_PLAY;
     case BUTTON_LEFT:
-    case BUTTON_LEFT | BUTTON_REPEAT:
         return A_PREV;
     case BUTTON_RIGHT:
-    case BUTTON_RIGHT | BUTTON_REPEAT:
         return A_NEXT;
+    /* Held: seek while the key is down, as on the stock firmware. */
+    case BUTTON_LEFT | BUTTON_REPEAT:
+        return A_SEEK_BACK;
+    case BUTTON_RIGHT | BUTTON_REPEAT:
+        return A_SEEK_FWD;
+    case BUTTON_LEFT | BUTTON_REL:
+    case BUTTON_RIGHT | BUTTON_REL:
+        return A_SEEK_END;
     default:
         break;
     }

@@ -41,6 +41,8 @@ static char overlay_letter;
 /* Redraw state. */
 static bool need_full = true;
 static int drawn_sel = -1, drawn_top = -1;
+static bool seeking;
+static long seek_pos, seek_start;
 
 static void mark_full(void)
 {
@@ -237,9 +239,7 @@ static const struct home_item home_all[] = {
     { "Genres", V_GENRES, false, false, false },
     { "Composers", V_COMPOSERS, false, false, false },
     { "Now Playing", V_NOW_PLAYING, false, false, false },
-    { "USB Link", V_HOME, false, false, true },
-    { "Benchmark", V_HOME, false, true, false },
-    { "Rockbox", V_HOME, true, false, false },
+    { "Settings", V_SETTINGS, false, false, false },
 };
 #define HOME_ALL ((int)(sizeof home_all / sizeof home_all[0]))
 
@@ -248,10 +248,6 @@ static int home_items(const struct home_item **out)
     int n = 0;
     for (int i = 0; i < HOME_ALL; i++) {
         if (home_all[i].kind == V_NOW_PLAYING && !playing())
-            continue;
-        if (home_all[i].bench && !shell_bench_available())
-            continue;
-        if (home_all[i].link && !shell_link_available())
             continue;
         out[n++] = &home_all[i];
     }
@@ -290,14 +286,105 @@ static void home_select(void)
     const struct home_item *it = items[stack[0].sel];
     if (it->rockbox)
         enter_rockbox_ui();
-    else if (it->bench) {
-        shell_bench_run();
-        mark_full();
-    } else if (it->link) {
-        shell_link_run();
-        mark_full();
-    } else
+    else
         push_kind(it->kind);
+}
+
+/* ---- settings ---- */
+
+enum setting_id {
+    SET_SHUFFLE,
+    SET_REPEAT,
+    SET_USB_LINK,
+    SET_BENCHMARK,
+    SET_ROCKBOX,
+    SET_COUNT
+};
+
+static const char *const setting_labels[SET_COUNT] = {
+    [SET_SHUFFLE] = "Shuffle",
+    [SET_REPEAT] = "Repeat",
+    [SET_USB_LINK] = "USB Link",
+    [SET_BENCHMARK] = "Benchmark",
+    [SET_ROCKBOX] = "Rockbox Menu",
+};
+
+/* Entries that depend on hardware state are hidden rather than shown disabled. */
+static bool setting_visible(int id)
+{
+    if (id == SET_USB_LINK)
+        return shell_link_available();
+    if (id == SET_BENCHMARK)
+        return shell_bench_available();
+    return true;
+}
+
+static int setting_at(int row)
+{
+    for (int i = 0; i < SET_COUNT; i++) {
+        if (!setting_visible(i))
+            continue;
+        if (row-- == 0)
+            return i;
+    }
+    return -1;
+}
+
+int shell_settings_count(void)
+{
+    int n = 0;
+    for (int i = 0; i < SET_COUNT; i++)
+        if (setting_visible(i))
+            n++;
+    return n;
+}
+
+const char *shell_settings_label(int row)
+{
+    int id = setting_at(row);
+    return id >= 0 ? setting_labels[id] : "";
+}
+
+const char *shell_settings_value(int row)
+{
+    static const char *const repeat_names[] = { "Off", "All", "One", "Shuffle", "A-B" };
+    int id = setting_at(row);
+    switch (id) {
+    case SET_SHUFFLE:
+        return global_settings.playlist_shuffle ? "On" : "Off";
+    case SET_REPEAT:
+        return global_settings.repeat_mode < (int)(sizeof repeat_names / sizeof repeat_names[0])
+                   ? repeat_names[global_settings.repeat_mode] : "Off";
+    default:
+        return NULL;
+    }
+}
+
+static void settings_select(int row)
+{
+    switch (setting_at(row)) {
+    case SET_SHUFFLE:
+        global_settings.playlist_shuffle = !global_settings.playlist_shuffle;
+        settings_save();
+        break;
+    case SET_REPEAT:
+        global_settings.repeat_mode = (global_settings.repeat_mode + 1) % NUM_REPEAT_MODES;
+        audio_flush_and_reload_tracks();
+        settings_save();
+        break;
+    case SET_USB_LINK:
+        shell_link_run();
+        break;
+    case SET_BENCHMARK:
+        shell_bench_run();
+        break;
+    case SET_ROCKBOX:
+        enter_rockbox_ui();
+        break;
+    default:
+        break;
+    }
+    mark_full();
 }
 
 /* ---- lists ---- */
@@ -507,6 +594,35 @@ static void handle(enum action a)
                 audio_prev();
             mark_full();
             break;
+        case A_SEEK_BACK:
+        case A_SEEK_FWD: {
+            /* Hold to seek, accelerating the longer the key is down. */
+            if (!id3 || !id3->length)
+                break;
+            if (!seeking) {
+                seeking = true;
+                seek_pos = (long)id3->elapsed;
+                seek_start = current_tick;
+                audio_pre_ff_rewind();
+            }
+            long held = current_tick - seek_start;
+            long step = 1000 + (held * 1000) / HZ * 2; /* 1s/tick, ramping up */
+            if (step > 15000)
+                step = 15000;
+            seek_pos += (a == A_SEEK_FWD) ? step : -step;
+            if (seek_pos < 0)
+                seek_pos = 0;
+            if (seek_pos > (long)id3->length)
+                seek_pos = (long)id3->length;
+            audio_ff_rewind(seek_pos);
+            break;
+        }
+        case A_SEEK_END:
+            if (seeking) {
+                seeking = false;
+                audio_resume();
+            }
+            break;
         default: break;
         }
         return;
@@ -520,6 +636,10 @@ static void handle(enum action a)
     case A_SELECT: {
         if (view_count(v) == 0)
             break;
+        if (v->kind == V_SETTINGS) {
+            settings_select(v->sel);
+            break;
+        }
         struct view child;
         if (view_is_tracks(v))
             play_view(v, v->sel);
