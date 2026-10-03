@@ -417,6 +417,9 @@ void draw_now_playing(const struct np_info *np, bool full)
                      200, np->colors[1], C_BG);
         gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 110);
     }
+    /* Capture the bare strip before anything is drawn into it: a partial repaint
+     * restores this, so it must not already contain the previous reading. */
+    draw_status_save();
     draw_status("Now Playing", true);
 
     int w, h;
@@ -434,7 +437,6 @@ void draw_now_playing(const struct np_info *np, bool full)
     snprintf(buf, sizeof buf, "%d of %d", playlist_get_display_index(), playlist_amount());
     gfx_text(F_CAPS, NP_TEXT_X, NP_ART_Y + 90, buf, C_SUB);
 
-    draw_status_save();
     gfx_save(prog_bg, PROG_X, BAR_Y, PROG_W, PROG_H);
     prog_bg_valid = true;
     draw_progress(id3);

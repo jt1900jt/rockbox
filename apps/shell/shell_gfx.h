@@ -101,8 +101,8 @@ void gfx_icon_prev(int x, int y, uint16_t color);
 void gfx_icon_next(int x, int y, uint16_t color);
 /* Battery with the percentage printed inside the cell. */
 void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color);
-#define GFX_BATTERY_W 32
-#define GFX_BATTERY_H 15
+#define GFX_BATTERY_W 27
+#define GFX_BATTERY_H 14
 void gfx_icon_headphones(int x, int y, uint16_t color);
 void gfx_icon_speaker(int x, int y, uint16_t color);
 void gfx_icon_shuffle(int x, int y, uint16_t color);
