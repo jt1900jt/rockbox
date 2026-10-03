@@ -100,16 +100,21 @@ static bool path_ok(const struct link *l)
     return true;
 }
 
+/* The listing buffer is static, not a local: the device runs this on its UI thread,
+ * whose stack is a few kilobytes. A 16 KB local overflowed it and took the player
+ * down partway through indexing a real library. One listing runs at a time. */
+#define LIST_BUF 4096
+static uint8_t list_buf[LIST_BUF];
+
 struct emit_state {
     struct link *l;
-    uint8_t buf[LINK_CHUNK_MAX];
     size_t used;
     int failed;
 };
 
 static void emit_flush(struct emit_state *e)
 {
-    if (e->used && send_frame(e->l, LINK_LIST_R, 0, e->l->seq, e->buf, (uint32_t)e->used) < 0)
+    if (e->used && send_frame(e->l, LINK_LIST_R, 0, e->l->seq, list_buf, (uint32_t)e->used) < 0)
         e->failed = 1;
     e->used = 0;
 }
@@ -121,9 +126,11 @@ static void emit_entry(void *ctx, const char *name, int kind, uint32_t size, uin
     if (e->failed || n > 255)
         return;
     size_t need = 1 + 4 + 4 + 2 + n;
-    if (e->used + need > sizeof e->buf)
+    if (need > LIST_BUF)
+        return; /* absurd name: skip rather than overflow */
+    if (e->used + need > LIST_BUF)
         emit_flush(e);
-    uint8_t *p = e->buf + e->used;
+    uint8_t *p = list_buf + e->used;
     *p++ = (uint8_t)kind;
     put32(p, size); p += 4;
     put32(p, mtime); p += 4;
@@ -255,6 +262,7 @@ static void handle_fs(struct link *l, int crc_ok)
             return;
         }
         struct emit_state e = { .l = l, .used = 0, .failed = 0 };
+        /* reset the shared buffer in case a previous listing was interrupted */
         if (fs->list(fs->ctx, l->path, emit_entry, &e) < 0) {
             send_error(l, l->seq, "cannot list");
             return;

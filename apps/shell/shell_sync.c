@@ -95,7 +95,7 @@ static int fs_remove(void *ctx, const char *path)
 /* Creates every missing parent of `path`. */
 static void make_parents(const char *path)
 {
-    char buf[LINK_PATH_MAX];
+    static char buf[LINK_PATH_MAX];
     strlcpy(buf, path, sizeof buf);
     for (char *p = buf + 1; *p; p++) {
         if (*p != '/')
