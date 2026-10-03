@@ -570,5 +570,16 @@ void shell_main(void)
         if (art_take_dirty())
             mark_full(); /* art arrived: repaint so it appears */
         handle(a);
+
+        /* Drain anything that arrived while we were drawing, so a fast wheel does not
+         * queue up one repaint per click. */
+        int drained = 0;
+        while (input_pending() && drained < 64) {
+            enum action next = input_get(0);
+            if (next == A_NONE || next == A_TIMEOUT)
+                break;
+            handle(next);
+            drained++;
+        }
     }
 }

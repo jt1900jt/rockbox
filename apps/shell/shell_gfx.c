@@ -17,12 +17,14 @@ struct face_spec {
 };
 
 static const struct face_spec face_files[F_COUNT] = {
-    [F_TITLE] = { "title-18" },
-    [F_MENU] = { "menu-14" },
-    [F_ROW] = { "row-13" },
-    [F_BODY] = { "body-12" },
-    [F_SUB] = { "sub-11" },
-    [F_CAPS] = { "caps-10" },
+    [F_TITLE] = { "title-20" },
+    [F_MENU] = { "menu-15" },
+    [F_MENU_SEL] = { "menu-17" },
+    [F_ROW] = { "row-14" },
+    [F_ROW_SEL] = { "row-15" },
+    [F_BODY] = { "body-13" },
+    [F_SUB] = { "sub-12" },
+    [F_CAPS] = { "caps-11" },
 };
 
 static ipfn_font fonts[F_COUNT];
@@ -258,6 +260,15 @@ void gfx_blit(const uint16_t *src, int x, int y, int w, int h)
         memcpy(&FB(x0, y0 + row), s, (size_t)w0 * 2);
     }
     gfx_dirty(x0, y0, w0, h0);
+}
+
+void gfx_save(uint16_t *dst, int x, int y, int w, int h)
+{
+    int x0 = x, y0 = y, w0 = w, h0 = h;
+    if (!clip(&x0, &y0, &w0, &h0))
+        return;
+    for (int row = 0; row < h0; row++)
+        memcpy(dst + ((y0 - y) + row) * w + (x0 - x), &FB(x0, y0 + row), (size_t)w0 * 2);
 }
 
 void gfx_blit_round(const uint16_t *src, int x, int y, int w, int h, int r)

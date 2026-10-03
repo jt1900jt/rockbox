@@ -34,12 +34,14 @@ typedef struct {
 
 /* Fonts, indexed by face. */
 enum gfx_face {
-    F_TITLE,  /* Inter SemiBold 18 */
-    F_MENU,   /* Inter SemiBold 14, tracked */
-    F_ROW,    /* Inter SemiBold 13 */
-    F_BODY,   /* Inter Medium 12 */
-    F_SUB,    /* Inter Regular 11 */
-    F_CAPS,   /* Inter SemiBold 10, tracked */
+    F_TITLE,    /* Inter SemiBold 20 */
+    F_MENU,     /* Inter SemiBold 15, tracked */
+    F_MENU_SEL, /* Inter SemiBold 17, tracked: selected home item */
+    F_ROW,      /* Inter SemiBold 14 */
+    F_ROW_SEL,  /* Inter SemiBold 15: selected list row */
+    F_BODY,     /* Inter Medium 13 */
+    F_SUB,      /* Inter Regular 12 */
+    F_CAPS,     /* Inter SemiBold 11, tracked */
     F_COUNT
 };
 
@@ -66,6 +68,8 @@ void gfx_wash(int x, int y, int w, int h, int cx, int cy, int radius, uint16_t c
 
 /* Blit RGB565 pixels. `src` is w*h in row order. */
 void gfx_blit(const uint16_t *src, int x, int y, int w, int h);
+/* Copy a region out of the framebuffer, so it can be restored later. */
+void gfx_save(uint16_t *dst, int x, int y, int w, int h);
 /* Blit with the corners rounded off against the background behind them. */
 void gfx_blit_round(const uint16_t *src, int x, int y, int w, int h, int r);
 /* Upscale a small image (the 80x60 blurred background) over a region. */

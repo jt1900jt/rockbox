@@ -21,6 +21,10 @@
 #define THUMB      28
 #define SIDE       10
 #define SCROLL_W   3
+/* selection bar geometry; row content must stay inside it */
+#define SEL_X      (SIDE - 4)
+#define SEL_W      (LCD_WIDTH - SEL_X - SCROLL_W - 5)
+#define ROW_RIGHT  (SEL_X + SEL_W - 8)
 
 /* Now Playing geometry */
 #define NP_ART     116
@@ -84,7 +88,7 @@ static void draw_row(const struct view *v, int i, int y, bool selected)
     view_row(v, i, &r);
 
     if (selected)
-        gfx_fill_round(SIDE - 4, y + 1, LCD_WIDTH - 2 * SIDE - SCROLL_W + 2, ROW_H - 2, 4, C_SEL_BG);
+        gfx_fill_round(SEL_X, y + 1, SEL_W, ROW_H - 2, 4, C_SEL_BG);
     else
         gfx_fill(0, y, LCD_WIDTH - SCROLL_W - 2, ROW_H, C_BG);
 
@@ -96,15 +100,16 @@ static void draw_row(const struct view *v, int i, int y, bool selected)
 
     uint16_t fg = selected ? C_SEL_FG : C_FG;
     uint16_t sub = selected ? C_SEL_SUB : C_SUB;
-    int right = LCD_WIDTH - SIDE - SCROLL_W;
+    int right = ROW_RIGHT;
     int trail_w = r.trail[0] ? gfx_width(F_CAPS, r.trail) + 10 : 0;
     int text_w = right - trail_w - x;
 
+    enum gfx_face tf = selected ? F_ROW_SEL : F_ROW;
     if (r.sub && r.sub[0]) {
-        gfx_text_fit(F_ROW, x, y + 16, text_w, r.title, fg);
-        gfx_text_fit(F_SUB, x, y + 29, text_w, r.sub, sub);
+        gfx_text_fit(tf, x, y + 17, text_w, r.title, fg);
+        gfx_text_fit(F_SUB, x, y + 31, text_w, r.sub, sub);
     } else {
-        gfx_text_fit(F_ROW, x, y + (ROW_H + gfx_ascent(F_ROW)) / 2 - 2, text_w, r.title, fg);
+        gfx_text_fit(tf, x, y + (ROW_H + gfx_ascent(tf)) / 2 - 2, text_w, r.title, fg);
     }
     if (trail_w)
         gfx_text_right(F_CAPS, right, y + (ROW_H + gfx_ascent(F_CAPS)) / 2 - 2, r.trail, sub);
@@ -227,15 +232,23 @@ void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint1
 
     draw_status("Music", false);
 
-    int line = 26;
-    int y0 = (LCD_HEIGHT - STATUS_H - n * line) / 2 + STATUS_H;
+    /* Fit the menu between the status bar and the bottom edge; with every item shown
+     * the natural spacing would run under the status bar. */
+    const int top_pad = 6, bot_pad = 6;
+    int avail = LCD_HEIGHT - STATUS_H - top_pad - bot_pad;
+    int line = n > 0 ? avail / n : avail;
+    if (line > 26)
+        line = 26;
+    int y0 = STATUS_H + top_pad + (avail - n * line) / 2;
     for (int i = 0; i < n; i++) {
         char up[32];
         gfx_upper(up, sizeof up, labels[i]);
-        int y = y0 + i * line + gfx_ascent(F_MENU);
-        if (i == sel)
-            gfx_fill(SIDE + 2, y - gfx_ascent(F_MENU) + 5, 5, 5, C_FG);
-        gfx_text(F_MENU, SIDE + 14, y, up, i == sel ? C_FG : C_DIM);
+        bool is_sel = i == sel;
+        enum gfx_face f = is_sel ? F_MENU_SEL : F_MENU;
+        int y = y0 + i * line + (line + gfx_ascent(f)) / 2 - 2;
+        if (is_sel)
+            gfx_fill(SIDE + 2, y - gfx_ascent(f) / 2 - 1, 5, 5, C_FG);
+        gfx_text(f, SIDE + 14, y, up, is_sel ? C_FG : C_DIM);
     }
 
     /* now-playing card on the right */
@@ -278,24 +291,33 @@ static const char *codec_name(uint8_t c)
     return c < sizeof names / sizeof names[0] ? names[c] : "";
 }
 
-/* Repainting only the progress area keeps the per-second tick cheap. */
+/* The progress area sits on top of the colour wash, so the per-second tick cannot just
+ * fill with the background colour: that leaves a black band across the gradient. Instead
+ * the strip is saved once per full redraw and restored before each tick. */
+#define PROG_X NP_ART_X
+#define PROG_W (LCD_WIDTH - 2 * NP_ART_X)
+#define PROG_H 22
+static uint16_t prog_bg[PROG_W * PROG_H];
+static bool prog_bg_valid;
+
 static void draw_progress(const struct mp3entry *id3)
 {
     char buf[32], buf2[16];
     unsigned long len = id3->length, el = id3->elapsed;
-    int bar_w = LCD_WIDTH - 2 * NP_ART_X;
 
-    gfx_fill(NP_ART_X, BAR_Y, bar_w, BAR_H, C_TRACK);
+    if (prog_bg_valid)
+        gfx_blit(prog_bg, PROG_X, BAR_Y, PROG_W, PROG_H);
+
+    gfx_fill(PROG_X, BAR_Y, PROG_W, BAR_H, C_TRACK);
     if (len)
-        gfx_fill(NP_ART_X, BAR_Y, (int)((unsigned long long)bar_w * (el > len ? len : el) / len), BAR_H, C_FG);
+        gfx_fill(PROG_X, BAR_Y, (int)((unsigned long long)PROG_W * (el > len ? len : el) / len), BAR_H, C_FG);
 
-    int ty = BAR_Y + BAR_H + 4 + gfx_ascent(F_CAPS);
-    gfx_fill(NP_ART_X, BAR_Y + BAR_H + 3, bar_w, gfx_line_height(F_CAPS) + 2, C_BG);
+    int ty = BAR_Y + BAR_H + 5 + gfx_ascent(F_CAPS);
     format_duration(buf, sizeof buf, el);
-    gfx_text(F_CAPS, NP_ART_X, ty, buf, C_SUB);
+    gfx_text(F_CAPS, PROG_X, ty, buf, C_SUB);
     format_duration(buf2, sizeof buf2, len > el ? len - el : 0);
     snprintf(buf, sizeof buf, "-%s", buf2);
-    gfx_text_right(F_CAPS, LCD_WIDTH - NP_ART_X, ty, buf, C_SUB);
+    gfx_text_right(F_CAPS, LCD_WIDTH - PROG_X, ty, buf, C_SUB);
 }
 
 void draw_now_playing(const struct np_info *np, bool full)
@@ -309,10 +331,11 @@ void draw_now_playing(const struct np_info *np, bool full)
         return;
     }
 
-    if (!full) {
+    if (!full && prog_bg_valid) {
         draw_progress(id3);
         return;
     }
+    prog_bg_valid = false;
 
     /* Background: a wash in the album's dominant colour, as in the mockup. */
     gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
@@ -344,6 +367,8 @@ void draw_now_playing(const struct np_info *np, bool full)
     snprintf(buf, sizeof buf, "%d of %d", playlist_get_display_index(), playlist_amount());
     gfx_text(F_CAPS, NP_TEXT_X, NP_ART_Y + 98, buf, C_SUB);
 
+    gfx_save(prog_bg, PROG_X, BAR_Y, PROG_W, PROG_H);
+    prog_bg_valid = true;
     draw_progress(id3);
 
     /* transport: a filled circle with the current state, flanked by skip glyphs */

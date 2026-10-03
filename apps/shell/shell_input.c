@@ -97,6 +97,18 @@ void input_init(void)
 #endif
 }
 
+/* True when more button events are already waiting. The shell drains them before
+ * drawing: a repaint costs 11-26 ms, and with a codec running the wheel can outpace
+ * that, so rendering every intermediate position makes the UI lag behind the wheel. */
+bool input_pending(void)
+{
+#ifdef SIMULATOR
+    if (script)
+        return false;
+#endif
+    return button_queue_count() > 0;
+}
+
 enum action input_get(int timeout_ticks)
 {
 #ifdef SIMULATOR

@@ -119,5 +119,6 @@ enum action {
 };
 void input_init(void);
 enum action input_get(int timeout_ticks);
+bool input_pending(void);
 
 #endif
