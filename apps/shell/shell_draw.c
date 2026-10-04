@@ -375,52 +375,76 @@ static void cf_cover(const uint16_t *src, int sw, int x, int y, int size, uint8_
         gfx_scrim(x, y, size, size, dim);
 }
 
-/* Art for an album, if resident; queues a load otherwise. */
-static const uint16_t *cf_art(const struct view *v, int index, int *w)
+/* Art for an album at a given class, if resident; queues a load otherwise. Falls back
+ * to the large cover (scaled at draw time) when a pack predates the SIDE class. */
+static const uint16_t *cf_art(const struct view *v, int index, uint32_t cls, int *w)
 {
     int count = view_count(v);
     if (index < 0 || index >= count)
         return NULL;
     const ipdb_album *al = ipdb_album_at(&shell_db, (uint32_t)index);
     int h;
-    const uint16_t *px = art_get(IPAP_LRGE, al->art_id, w, &h);
+    const uint16_t *px = art_get(cls, al->art_id, w, &h);
+    if (!px && cls != IPAP_LRGE)
+        px = art_get(IPAP_LRGE, al->art_id, w, &h);
     return (px && *w == h) ? px : NULL;
 }
 
-void draw_coverflow(const struct view *v)
+#define CF_STRIP_Y  (CF_ART_Y - 2)
+#define CF_STRIP_H  (CF_CENTER + 46)
+
+void draw_coverflow(const struct view *v, bool full)
 {
     int count = view_count(v);
+    const ipdb_album *sel_album = count ? ipdb_album_at(&shell_db, (uint32_t)v->sel) : NULL;
+
+    /* Moving the selection only changes the covers and the labels. Repainting the whole
+     * screen costs a 25 ms push per wheel click, which is what made this feel sluggish.
+     * The background is redrawn with the full-screen geometry but clipped to the part
+     * being repainted, so the gradient lines up instead of restarting at the seam. */
+    int rp_y = CF_STRIP_Y, rp_h = LCD_HEIGHT - CF_STRIP_Y - 18;
+    if (!full && sel_album)
+        gfx_clip(0, rp_y, LCD_WIDTH, rp_h);
     gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+    if (!full && sel_album && sel_album->colors[0]) {
+        gfx_wash(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_WIDTH / 2, CF_ART_Y + CF_CENTER / 2,
+                 220, sel_album->colors[0], C_BG);
+        gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 130);
+    }
 
     if (count == 0) {
+        gfx_clip_reset();
         draw_status("Albums", true);
         gfx_text_center(F_BODY, LCD_WIDTH / 2, LCD_HEIGHT / 2, 280, "No albums", C_SUB);
         return;
     }
 
-    const ipdb_album *cur = ipdb_album_at(&shell_db, (uint32_t)v->sel);
-    /* Wash in the current album's colour, so the background follows the selection. */
-    if (cur->colors[0]) {
-        gfx_wash(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_WIDTH / 2, CF_ART_Y + CF_CENTER / 2,
-                 220, cur->colors[0], C_BG);
-        gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 130);
+    const ipdb_album *cur = sel_album;
+    if (full) {
+        if (cur->colors[0]) {
+            gfx_wash(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_WIDTH / 2, CF_ART_Y + CF_CENTER / 2,
+                     220, cur->colors[0], C_BG);
+            gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 130);
+        }
+        draw_status("Albums", true);
     }
-    draw_status("Albums", true);
 
     const int cx = LCD_WIDTH / 2;
     int w;
-    /* Far, then side, then centre: nearer covers overlap the ones behind them. */
-    const uint16_t *px = cf_art(v, v->sel - 2, &w);
+    /* Far, then side, then centre: nearer covers overlap the ones behind them. The side
+     * covers come pre-rendered at 74 px, so the common case is a straight copy; the far
+     * ones are scaled from that, which is a quarter of the pixels of scaling from 116. */
+    const uint16_t *px = cf_art(v, v->sel - 2, IPAP_SIDE, &w);
     cf_cover(px, w, cx - CF_CENTER / 2 - CF_SIDE - 28, CF_ART_Y + 40, CF_FAR, 150);
-    px = cf_art(v, v->sel + 2, &w);
+    px = cf_art(v, v->sel + 2, IPAP_SIDE, &w);
     cf_cover(px, w, cx + CF_CENTER / 2 + CF_SIDE + 28 - CF_FAR, CF_ART_Y + 40, CF_FAR, 150);
 
-    px = cf_art(v, v->sel - 1, &w);
+    px = cf_art(v, v->sel - 1, IPAP_SIDE, &w);
     cf_cover(px, w, cx - CF_CENTER / 2 - CF_SIDE + 12, CF_ART_Y + 22, CF_SIDE, 90);
-    px = cf_art(v, v->sel + 1, &w);
+    px = cf_art(v, v->sel + 1, IPAP_SIDE, &w);
     cf_cover(px, w, cx + CF_CENTER / 2 - 12, CF_ART_Y + 22, CF_SIDE, 90);
 
-    px = cf_art(v, v->sel, &w);
+    px = cf_art(v, v->sel, IPAP_LRGE, &w);
     cf_cover(px, w, cx - CF_CENTER / 2, CF_ART_Y, CF_CENTER, 0);
 
     /* Title and artist below the stack. */
@@ -429,15 +453,22 @@ void draw_coverflow(const struct view *v)
     const ipdb_group *ar = &shell_db.artists[cur->artist_id];
     gfx_text_center(F_BODY, cx, ty + 20, LCD_WIDTH - 2 * SIDE, ipdb_str(&shell_db, ar->name), C_SUB);
 
+    gfx_clip_reset();
     char pos[24];
     snprintf(pos, sizeof pos, "%d of %d", v->sel + 1, count);
+    gfx_fill(0, LCD_HEIGHT - 20, LCD_WIDTH, 20, C_BG);
     gfx_text_center(F_CAPS, cx, LCD_HEIGHT - 10, 200, pos, C_DIM);
 
-    /* Pull in the covers either side so a turn of the wheel finds them loaded. */
+    /* Pull in the covers either side so a turn of the wheel finds them loaded: the
+     * neighbours at side size, and the ones that could become the centre at full size. */
     for (int d = -3; d <= 3; d++) {
         int i = v->sel + d;
-        if (i >= 0 && i < count)
-            art_prefetch(IPAP_LRGE, ipdb_album_at(&shell_db, (uint32_t)i)->art_id);
+        if (i < 0 || i >= count)
+            continue;
+        uint32_t art = ipdb_album_at(&shell_db, (uint32_t)i)->art_id;
+        art_prefetch(IPAP_SIDE, art);
+        if (d >= -1 && d <= 1)
+            art_prefetch(IPAP_LRGE, art);
     }
 }
 

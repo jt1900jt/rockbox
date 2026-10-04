@@ -717,7 +717,7 @@ static void render(void)
     case V_COVERFLOW:
         list_clamp(v);
         if (need_full || v->sel != drawn_sel) {
-            draw_coverflow(v);
+            draw_coverflow(v, need_full);
             need_full = false;
             drawn_sel = v->sel;
         }

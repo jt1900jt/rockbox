@@ -90,7 +90,7 @@ void draw_status_invalidate(void);
 void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint16_t swatch);
 void draw_list(const struct view *v, bool full);
 void draw_list_rows(const struct view *v, int old_sel, int new_sel);
-void draw_coverflow(const struct view *v);
+void draw_coverflow(const struct view *v, bool full);
 void draw_list_header(const struct view *v, const char *title, const char *sub,
                       uint32_t art_id, uint16_t swatch);
 void draw_now_playing(const struct np_info *np, bool full);

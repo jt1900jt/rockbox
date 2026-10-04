@@ -166,6 +166,7 @@ static inline uint32_t ipdb_jump(const ipdb_db *db, int row, int bucket)
     ((uint32_t)(uint8_t)(a) | ((uint32_t)(uint8_t)(b) << 8) | ((uint32_t)(uint8_t)(c) << 16) | ((uint32_t)(uint8_t)(d) << 24))
 #define IPAP_THMB IPAP_FOURCC('T', 'H', 'M', 'B')
 #define IPAP_HEAD IPAP_FOURCC('H', 'E', 'A', 'D')
+#define IPAP_SIDE IPAP_FOURCC('S', 'I', 'D', 'E')
 #define IPAP_LRGE IPAP_FOURCC('L', 'R', 'G', 'E')
 #define IPAP_BLUR IPAP_FOURCC('B', 'L', 'U', 'R')
 

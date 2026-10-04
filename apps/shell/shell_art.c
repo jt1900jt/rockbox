@@ -18,11 +18,13 @@
  * the large and blurred classes are one per screen. */
 #define THUMB_SLOTS 24
 #define HEAD_SLOTS  4
+#define SIDE_SLOTS  8   /* four side covers on screen, plus the ones being scrolled toward */
 #define LARGE_SLOTS 3
 #define BLUR_SLOTS  3
 
 #define THUMB_PX (28 * 28)
 #define HEAD_PX  (52 * 52)
+#define SIDE_PX  (74 * 74)
 #define LARGE_PX (116 * 116)
 #define BLUR_PX  (80 * 60)
 
@@ -44,12 +46,15 @@ static uint32_t clock_tick;
 
 static uint16_t *cache_mem;
 static int cache_handle = -1;
-static uint32_t ids_thumb[THUMB_SLOTS], ids_head[HEAD_SLOTS], ids_large[LARGE_SLOTS], ids_blur[BLUR_SLOTS];
-static uint32_t st_thumb[THUMB_SLOTS], st_head[HEAD_SLOTS], st_large[LARGE_SLOTS], st_blur[BLUR_SLOTS];
+static uint32_t ids_thumb[THUMB_SLOTS], ids_head[HEAD_SLOTS], ids_side[SIDE_SLOTS],
+    ids_large[LARGE_SLOTS], ids_blur[BLUR_SLOTS];
+static uint32_t st_thumb[THUMB_SLOTS], st_head[HEAD_SLOTS], st_side[SIDE_SLOTS],
+    st_large[LARGE_SLOTS], st_blur[BLUR_SLOTS];
 
-static struct cache_class classes[4] = {
+static struct cache_class classes[5] = {
     { IPAP_THMB, THUMB_SLOTS, THUMB_PX, NULL, ids_thumb, st_thumb },
     { IPAP_HEAD, HEAD_SLOTS, HEAD_PX, NULL, ids_head, st_head },
+    { IPAP_SIDE, SIDE_SLOTS, SIDE_PX, NULL, ids_side, st_side },
     { IPAP_LRGE, LARGE_SLOTS, LARGE_PX, NULL, ids_large, st_large },
     { IPAP_BLUR, BLUR_SLOTS, BLUR_PX, NULL, ids_blur, st_blur },
 };
