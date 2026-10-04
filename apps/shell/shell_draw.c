@@ -359,6 +359,27 @@ static const char *codec_name(uint8_t c)
     return c < sizeof names / sizeof names[0] ? names[c] : "";
 }
 
+/* Five stars, filled to `rating`. Drawn as small diamonds: at this size a star outline
+ * turns to mush, while a solid shape reads clearly filled or empty. */
+#define STAR_W 13
+static void draw_stars(uint8_t rating, int x, int y)
+{
+    for (int i = 0; i < 5; i++) {
+        uint16_t c = i < rating ? C_FG : C_TRACK;
+        int cx = x + i * STAR_W;
+        for (int r = 0; r < 5; r++) {
+            int w = 1 + 2 * (r < 3 ? r : 4 - r);
+            gfx_fill(cx + 4 - w / 2, y + r, w, 1, c);
+        }
+    }
+}
+
+void draw_rating_overlay(const struct np_info *np)
+{
+    gfx_fill(NP_TEXT_X, NP_ART_Y + 100, LCD_WIDTH - NP_TEXT_X - SIDE, 14, C_BG);
+    draw_stars(np->rating, NP_TEXT_X, NP_ART_Y + 106);
+}
+
 /* The progress area sits on top of the colour wash, so the per-second tick cannot just
  * fill with the background colour: that leaves a black band across the gradient. Instead
  * the strip is saved once per full redraw and restored before each tick. */
@@ -436,6 +457,7 @@ void draw_now_playing(const struct np_info *np, bool full)
 
     snprintf(buf, sizeof buf, "%d of %d", playlist_get_display_index(), playlist_amount());
     gfx_text(F_CAPS, NP_TEXT_X, NP_ART_Y + 90, buf, C_SUB);
+    draw_stars(np->rating, NP_TEXT_X, NP_ART_Y + 106);
 
     gfx_save(prog_bg, PROG_X, BAR_Y, PROG_W, PROG_H);
     prog_bg_valid = true;
@@ -473,6 +495,16 @@ void draw_now_playing(const struct np_info *np, bool full)
 }
 
 /* ---- misc ---- */
+
+/* Brief confirmation strip along the bottom, for actions with no visible result. */
+void draw_toast(const char *text)
+{
+    const int h = 26;
+    int y = LCD_HEIGHT - h - 6;
+    gfx_fill_round(SIDE, y, LCD_WIDTH - 2 * SIDE, h, 6, C_SEL_BG);
+    gfx_text_center(F_ROW, LCD_WIDTH / 2, y + (h + gfx_ascent(F_ROW)) / 2 - 2,
+                    LCD_WIDTH - 4 * SIDE, text, C_SEL_FG);
+}
 
 void draw_letter_overlay(char letter)
 {

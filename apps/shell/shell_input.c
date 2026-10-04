@@ -77,6 +77,7 @@ static enum action script_next(void)
         case 'u': return A_UP;
         case 'd': return A_DOWN;
         case 's': return A_SELECT;
+        case 'S': return A_RATE;
         case 'm': return A_BACK;
         case 'M': return A_HOME;
         case 'p': return A_PLAY;
@@ -131,6 +132,8 @@ enum action input_get(int timeout_ticks)
         return A_UP;
     case BUTTON_SELECT:
         return A_SELECT;
+    case BUTTON_SELECT | BUTTON_REPEAT:
+        return A_RATE;
     case BUTTON_MENU:
         return A_BACK;
     case BUTTON_MENU | BUTTON_REPEAT:

@@ -46,6 +46,7 @@ static int drawn_sel = -1, drawn_top = -1;
 static bool seeking;
 static long seek_pos, seek_start;
 static bool volume_dirty;
+static long queued_tick; /* shows the "queued" confirmation briefly */
 
 /* Wheel acceleration: clicks arriving in quick succession move more than one step,
  * so a single sweep covers the range without losing fine control when turned slowly. */
@@ -202,6 +203,7 @@ static bool playing(void)
  * It runs once per track change, not per frame. */
 static uint32_t current_uid = IPDB_NONE;
 static uint32_t last_elapsed, last_length;
+static uint8_t current_rating;
 
 bool shell_np_info(struct np_info *np)
 {
@@ -240,6 +242,7 @@ bool shell_np_info(struct np_info *np)
         }
     }
     *np = cached;
+    np->rating = current_rating;
     return cached_ok;
 }
 
@@ -258,6 +261,7 @@ static void journal_poll(void)
             journal_track_finished(current_uid, last_elapsed, last_length);
         current_uid = uid;
         last_elapsed = last_length = 0;
+        current_rating = 0; /* ratings are per-track and come back from the companion */
     }
     /* Track the furthest point reached, not the latest sample: by the time a track
      * change is noticed the engine has already reset elapsed for the new track, which
@@ -655,6 +659,12 @@ static void render(void)
         drawn_sel = v->sel;
         drawn_top = v->top;
 
+        if (queued_tick && TIME_BEFORE(current_tick, queued_tick + HZ)) {
+            draw_toast("Added to queue");
+        } else if (queued_tick) {
+            queued_tick = 0;
+            mark_full();
+        }
         if (overlay_letter) {
             if (TIME_BEFORE(current_tick, overlay_until))
                 draw_letter_overlay(overlay_letter);
@@ -769,6 +779,17 @@ static void handle(enum action a)
                 audio_resume();
             }
             break;
+        case A_RATE: {
+            if (current_uid == IPDB_NONE)
+                break;
+            current_rating = (uint8_t)((current_rating + 1) % 6);
+            journal_log(JOURNAL_RATING, current_uid, current_rating);
+            struct np_info np2;
+            shell_np_info(&np2);
+            draw_rating_overlay(&np2);
+            gfx_flush();
+            break;
+        }
         case A_SELECT: /* cycle shuffle, then repeat, as the stock centre button does */
             if (!global_settings.playlist_shuffle) {
                 global_settings.playlist_shuffle = true;
@@ -790,6 +811,15 @@ static void handle(enum action a)
     case A_DOWN: list_move(v, 1); break;
     case A_PREV: letter_jump(v, -1); break;
     case A_NEXT: letter_jump(v, 1); break;
+    case A_RATE: /* centre held on a list: add to the queue, as stock On-The-Go did */
+        if (view_is_tracks(v) && view_count(v) > 0 && playing()) {
+            const ipdb_track *t = ipdb_track_at(&shell_db, view_track_id(v, v->sel));
+            playlist_insert_track(NULL, ipdb_str(&shell_db, t->path), PLAYLIST_INSERT_LAST,
+                                  false, true);
+            queued_tick = current_tick;
+            mark_full();
+        }
+        break;
     case A_SELECT: {
         if (view_count(v) == 0)
             break;

@@ -58,6 +58,7 @@ struct row {
 /* What Now Playing needs from the library for the current track. */
 struct np_info {
     uint32_t uid;
+    uint8_t rating;
     uint32_t art_id;
     uint16_t colors[3];
     uint32_t sample_rate;
@@ -91,7 +92,10 @@ void draw_list_rows(const struct view *v, int old_sel, int new_sel);
 void draw_list_header(const struct view *v, const char *title, const char *sub,
                       uint32_t art_id, uint16_t swatch);
 void draw_now_playing(const struct np_info *np, bool full);
+/* Flash the rating stars after a change, without repainting the screen. */
+void draw_rating_overlay(const struct np_info *np);
 void draw_letter_overlay(char letter);
+void draw_toast(const char *text);
 void draw_message(const char *line1, const char *line2);
 void format_duration(char *buf, int len, uint32_t ms);
 /* Fills np from the library for the track currently playing. */
@@ -132,6 +136,7 @@ enum action {
     A_SEEK_BACK,
     A_SEEK_FWD,
     A_SEEK_END, /* seek key released */
+    A_RATE,     /* centre held: cycle the rating */
     A_USB,      /* USB session ended: library may have changed */
     A_QUIT,    /* simulator script finished */
 };
