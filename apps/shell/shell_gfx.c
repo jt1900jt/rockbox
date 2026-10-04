@@ -505,6 +505,41 @@ void gfx_icon_next(int x, int y, uint16_t color)
     gfx_fill(x + 6, y, 2, 10, color);
 }
 
+/* Widths of the icons above, for the centring helpers. */
+#define PLAY_W  5
+#define PAUSE_W 8
+#define SKIP_W  8
+
+void gfx_icon_play_c(int cx, int cy, uint16_t color)
+{
+    /* +1: the triangle's mass is left of centre, so a bounding-box centre reads left. */
+    gfx_icon_play(cx - PLAY_W / 2 + 1, cy - GFX_ICON_H / 2, color);
+}
+
+void gfx_icon_pause_c(int cx, int cy, uint16_t color)
+{
+    gfx_icon_pause(cx - PAUSE_W / 2, cy - GFX_ICON_H / 2, color);
+}
+
+void gfx_icon_prev_c(int cx, int cy, uint16_t color)
+{
+    gfx_icon_prev(cx - SKIP_W / 2, cy - GFX_ICON_H / 2, color);
+}
+
+void gfx_icon_next_c(int cx, int cy, uint16_t color)
+{
+    gfx_icon_next(cx - SKIP_W / 2, cy - GFX_ICON_H / 2, color);
+}
+
+int gfx_baseline_in(enum gfx_face face, int y, int h)
+{
+    const ipfn_font *f = &fonts[face];
+    /* Centre on the cap box (ascent above the baseline, descent below) rather than the
+     * line box, which includes leading and pushes text visibly high. */
+    int cap = f->ascent + f->descent;
+    return y + (h - cap) / 2 + f->ascent;
+}
+
 void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color)
 {
     const int w = GFX_BATTERY_W - 3, h = GFX_BATTERY_H;

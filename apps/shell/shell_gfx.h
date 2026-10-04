@@ -94,11 +94,24 @@ int gfx_ascent(enum gfx_face face);
 int gfx_line_height(enum gfx_face face);
 
 /* Glyph-based icons drawn as paths, since the design's icons are not in the font. */
+/* Icons are drawn from their top-left corner and are all 10 px tall. The _c variants
+ * take a centre point instead, which is what every caller actually wants; a triangle
+ * also needs a pixel of optical correction, since its visual mass sits left of its
+ * bounding box. */
+#define GFX_ICON_H 10
 void gfx_icon_chevron_left(int x, int y, uint16_t color);
 void gfx_icon_play(int x, int y, uint16_t color);
 void gfx_icon_pause(int x, int y, uint16_t color);
 void gfx_icon_prev(int x, int y, uint16_t color);
 void gfx_icon_next(int x, int y, uint16_t color);
+void gfx_icon_play_c(int cx, int cy, uint16_t color);
+void gfx_icon_pause_c(int cx, int cy, uint16_t color);
+void gfx_icon_prev_c(int cx, int cy, uint16_t color);
+void gfx_icon_next_c(int cx, int cy, uint16_t color);
+
+/* Baseline that vertically centres a line of `face` inside a box of height `h`
+ * starting at `y`, using the real cap height rather than the full ascent. */
+int gfx_baseline_in(enum gfx_face face, int y, int h);
 /* Battery with the percentage printed inside the cell. */
 void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color);
 #define GFX_BATTERY_W 27

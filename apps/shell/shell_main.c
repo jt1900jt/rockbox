@@ -348,6 +348,7 @@ static void home_select(void)
 
 enum setting_id {
     SET_CLOCK,
+    SET_CLOCK_FORMAT,
     SET_BATTERY_PCT,
     SET_SHUFFLE,
     SET_REPEAT,
@@ -359,6 +360,7 @@ enum setting_id {
 
 static const char *const setting_labels[SET_COUNT] = {
     [SET_CLOCK] = "Clock in Status Bar",
+    [SET_CLOCK_FORMAT] = "Clock Format",
     [SET_BATTERY_PCT] = "Battery Percentage",
     [SET_SHUFFLE] = "Shuffle",
     [SET_REPEAT] = "Repeat",
@@ -436,6 +438,8 @@ int shell_volume_percent(void)
 /* Entries that depend on hardware state are hidden rather than shown disabled. */
 static bool setting_visible(int id)
 {
+    if (id == SET_CLOCK_FORMAT)
+        return prefs.clock != 0;
     if (id == SET_USB_LINK)
         return shell_link_available();
     if (id == SET_BENCHMARK)
@@ -476,6 +480,8 @@ const char *shell_settings_value(int row)
     switch (id) {
     case SET_CLOCK:
         return prefs.clock ? "On" : "Off";
+    case SET_CLOCK_FORMAT:
+        return global_settings.timeformat ? "12 Hour" : "24 Hour";
     case SET_BATTERY_PCT:
         return prefs.battery_pct ? "On" : "Off";
     case SET_SHUFFLE:
@@ -494,6 +500,10 @@ static void settings_select(int row)
     case SET_CLOCK:
         prefs.clock = !prefs.clock;
         prefs_save();
+        break;
+    case SET_CLOCK_FORMAT:
+        global_settings.timeformat = !global_settings.timeformat;
+        settings_save();
         break;
     case SET_BATTERY_PCT:
         prefs.battery_pct = !prefs.battery_pct;

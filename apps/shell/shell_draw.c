@@ -72,12 +72,13 @@ void draw_status(const char *title, bool can_go_back)
         gfx_blit(status_bg, 0, 0, LCD_WIDTH, STATUS_H);
     else
         gfx_fill(0, 0, LCD_WIDTH, STATUS_H, C_BG);
-    int cy = (STATUS_H - gfx_line_height(F_CAPS)) / 2 + gfx_ascent(F_CAPS);
+    int cy = gfx_baseline_in(F_CAPS, 0, STATUS_H);
+    int mid = STATUS_H / 2;
 
     int left = SIDE;
     if (can_go_back) {
-        gfx_icon_chevron_left(left, (STATUS_H - 10) / 2, C_FG);
-        left += 12;
+        gfx_icon_chevron_left(left, mid - 5, C_FG);
+        left += 14;
     }
     if (shell_show_clock()) {
         struct tm *t = get_time();
@@ -97,7 +98,7 @@ void draw_status(const char *title, bool can_go_back)
     int bx = LCD_WIDTH - SIDE - GFX_BATTERY_W;
     int right = bx;
     if (shell_show_battery_pct())
-        gfx_icon_battery(bx, (STATUS_H - GFX_BATTERY_H) / 2, battery_level(), charger_inserted(), C_SUB);
+        gfx_icon_battery(bx, mid - GFX_BATTERY_H / 2, battery_level(), charger_inserted(), C_SUB);
     else
         right = LCD_WIDTH - SIDE;
 
@@ -105,20 +106,19 @@ void draw_status(const char *title, bool can_go_back)
      * index rescaled to 0-100, so a full sweep always reads 0 to 100. */
     if (shell_status_volume()) {
         snprintf(buf, sizeof buf, "%d", shell_volume_percent());
-        right -= gfx_width(F_CAPS, buf) + 6;
+        right -= gfx_width(F_CAPS, buf) + 8;
         gfx_text(F_CAPS, right, cy, buf, C_FG);
-        right -= 12;
-        gfx_icon_speaker(right, (STATUS_H - 10) / 2, C_SUB);
+        right -= 14;
+        gfx_icon_speaker(right, mid - 5, C_SUB);
     }
 
     int st = audio_status();
     if (st & AUDIO_STATUS_PLAY) {
-        int gy = (STATUS_H - 10) / 2;
         right -= 14;
         if (st & AUDIO_STATUS_PAUSE)
-            gfx_icon_pause(right, gy, C_SUB);
+            gfx_icon_pause_c(right + 4, mid, C_SUB);
         else
-            gfx_icon_play(right, gy, C_SUB);
+            gfx_icon_play_c(right + 4, mid, C_SUB);
     }
 
     /* Keep the title centred on the screen: reserve the same width on both sides,
@@ -174,13 +174,18 @@ static void draw_row(const struct view *v, int i, int y, bool selected)
 
     enum gfx_face tf = selected ? F_ROW_SEL : F_ROW;
     if (r.sub && r.sub[0]) {
-        gfx_text_fit(tf, x, y + 17, text_w, r.title, fg);
-        gfx_text_fit(F_SUB, x, y + 31, text_w, r.sub, sub);
+        /* Two lines centred as a block: the pair sits on the row's optical centre
+         * rather than each line being placed by hand. */
+        const int gap = 2;
+        int block = gfx_ascent(tf) + gap + gfx_line_height(F_SUB);
+        int top = y + (ROW_H - block) / 2;
+        gfx_text_fit(tf, x, top + gfx_ascent(tf), text_w, r.title, fg);
+        gfx_text_fit(F_SUB, x, top + gfx_ascent(tf) + gap + gfx_ascent(F_SUB), text_w, r.sub, sub);
     } else {
-        gfx_text_fit(tf, x, y + (ROW_H + gfx_ascent(tf)) / 2 - 2, text_w, r.title, fg);
+        gfx_text_fit(tf, x, gfx_baseline_in(tf, y, ROW_H), text_w, r.title, fg);
     }
     if (trail_w)
-        gfx_text_right(F_CAPS, right, y + (ROW_H + gfx_ascent(F_CAPS)) / 2 - 2, r.trail, sub);
+        gfx_text_right(F_CAPS, right, gfx_baseline_in(F_CAPS, y, ROW_H), r.trail, sub);
 }
 
 static void draw_scrollbar(int count, int top)
@@ -269,11 +274,16 @@ void draw_list_header(const struct view *v, const char *title, const char *sub, 
         gfx_fill_round(SIDE, STATUS_H + 4, 52, 52, 4, swatch ? swatch : C_PLACEHOLD);
 
     int x = SIDE + 52 + 12;
-    gfx_text_fit(F_TITLE, x, STATUS_H + 26, LCD_WIDTH - x - SIDE, title, C_FG);
+    int tw = LCD_WIDTH - x - SIDE;
     if (sub) {
+        int block = gfx_ascent(F_TITLE) + 4 + gfx_line_height(F_CAPS);
+        int top = STATUS_H + 4 + (52 - block) / 2;
+        gfx_text_fit(F_TITLE, x, top + gfx_ascent(F_TITLE), tw, title, C_FG);
         char up[64];
         gfx_upper(up, sizeof up, sub);
-        gfx_text_fit(F_CAPS, x, STATUS_H + 44, LCD_WIDTH - x - SIDE, up, C_SUB);
+        gfx_text_fit(F_CAPS, x, top + gfx_ascent(F_TITLE) + 4 + gfx_ascent(F_CAPS), tw, up, C_SUB);
+    } else {
+        gfx_text_fit(F_TITLE, x, gfx_baseline_in(F_TITLE, STATUS_H + 4, 52), tw, title, C_FG);
     }
     gfx_hline(SIDE, STATUS_H + h - 1, LCD_WIDTH - 2 * SIDE, C_HAIRLINE);
     (void)v;
@@ -313,9 +323,9 @@ void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint1
         gfx_upper(up, sizeof up, labels[i]);
         bool is_sel = i == sel;
         enum gfx_face f = is_sel ? F_TITLE : F_MENU_SEL;
-        int y = y0 + i * line + (line + gfx_ascent(f)) / 2 - 2;
+        int y = gfx_baseline_in(f, y0 + i * line, line);
         if (is_sel)
-            gfx_fill(SIDE + 2, y - gfx_ascent(f) / 2 - 2, 6, 6, C_FG);
+            gfx_fill(SIDE + 2, y - gfx_ascent(f) / 2 - 1, 6, 6, C_FG);
         gfx_text(f, SIDE + 16, y, up, is_sel ? C_FG : C_DIM);
     }
 
@@ -465,23 +475,24 @@ void draw_now_playing(const struct np_info *np, bool full)
 
     /* transport: a filled circle with the current state, flanked by skip glyphs.
      * Kept clear of the progress strip, which is restored on every tick. */
-    int cy = 199, cx = LCD_WIDTH / 2;
+    const int cy = 199, cx = LCD_WIDTH / 2, skip_gap = 46;
     gfx_fill_round(cx - 15, cy - 15, 30, 30, 15, C_FG);
     if (audio_status() & AUDIO_STATUS_PAUSE)
-        gfx_icon_play(cx - 4, cy - 5, C_SEL_FG);
+        gfx_icon_play_c(cx, cy, C_SEL_FG);
     else
-        gfx_icon_pause(cx - 4, cy - 5, C_SEL_FG);
-    gfx_icon_prev(cx - 50, cy - 5, C_SUB);
-    gfx_icon_next(cx + 42, cy - 5, C_SUB);
+        gfx_icon_pause_c(cx, cy, C_SEL_FG);
+    gfx_icon_prev_c(cx - skip_gap, cy, C_SUB);
+    gfx_icon_next_c(cx + skip_gap, cy, C_SUB);
 
-    /* Mode indicators: S for shuffle, R (R1 for repeat-one) for repeat. Lit when on. */
-    int my = cy + gfx_ascent(F_ROW) / 2;
-    gfx_text(F_ROW, SIDE + 4, my, "S", global_settings.playlist_shuffle ? C_FG : C_OFF);
+    /* Mode indicators: S for shuffle, R (R1 for repeat-one) for repeat. Lit when on,
+     * sharing the transport's centre line. */
+    int my = gfx_baseline_in(F_ROW, cy - 10, 20);
+    gfx_text(F_ROW, SIDE + 2, my, "S", global_settings.playlist_shuffle ? C_FG : C_OFF);
     bool rep = global_settings.repeat_mode != REPEAT_OFF;
     const char *rlabel = global_settings.repeat_mode == REPEAT_ONE ? "R1" : "R";
-    gfx_text_right(F_ROW, LCD_WIDTH - SIDE - 4, my, rlabel, rep ? C_FG : C_OFF);
+    gfx_text_right(F_ROW, LCD_WIDTH - SIDE - 2, my, rlabel, rep ? C_FG : C_OFF);
 
-    int fy = LCD_HEIGHT - 12;
+    int fy = gfx_baseline_in(F_CAPS, LCD_HEIGHT - 22, 20);
     if (np->codec) {
         if (np->lossless)
             snprintf(buf, sizeof buf, "%s \xc2\xb7 %u/%lu", codec_name(np->codec), np->bits,
@@ -502,7 +513,7 @@ void draw_toast(const char *text)
     const int h = 26;
     int y = LCD_HEIGHT - h - 6;
     gfx_fill_round(SIDE, y, LCD_WIDTH - 2 * SIDE, h, 6, C_SEL_BG);
-    gfx_text_center(F_ROW, LCD_WIDTH / 2, y + (h + gfx_ascent(F_ROW)) / 2 - 2,
+    gfx_text_center(F_ROW, LCD_WIDTH / 2, gfx_baseline_in(F_ROW, y, h),
                     LCD_WIDTH - 4 * SIDE, text, C_SEL_FG);
 }
 
@@ -512,7 +523,7 @@ void draw_letter_overlay(char letter)
     const int box = 56;
     int x = (LCD_WIDTH - box) / 2, y = (LCD_HEIGHT - box) / 2;
     gfx_fill_round(x, y, box, box, 10, C_SEL_BG);
-    gfx_text_center(F_TITLE, LCD_WIDTH / 2, y + (box + gfx_ascent(F_TITLE)) / 2 - 2, box, s, C_SEL_FG);
+    gfx_text_center(F_TITLE, LCD_WIDTH / 2, gfx_baseline_in(F_TITLE, y, box), box, s, C_SEL_FG);
 }
 
 void draw_message(const char *line1, const char *line2)
