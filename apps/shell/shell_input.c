@@ -97,6 +97,30 @@ static enum action script_next(void)
 static int seek_dir;
 static bool seek_repeated;
 
+/* Rows the most recent wheel event should move. The driver reports the wheel's angular
+ * velocity alongside each event; a slow turn stays at one row so single items remain
+ * reachable, while a fast spin covers a long list without many revolutions. */
+static int wheel_steps = 1;
+
+int input_wheel_steps(void)
+{
+    int n = wheel_steps;
+    wheel_steps = 1;
+    return n;
+}
+
+static void note_wheel(void)
+{
+#if defined(HAVE_WHEEL_ACCELERATION) && !defined(SIMULATOR)
+    int n = button_apply_acceleration((unsigned int)button_get_data());
+    wheel_steps = n > 0 ? n : 1;
+    if (wheel_steps > 32)
+        wheel_steps = 32; /* a flick should not jump the whole library */
+#else
+    wheel_steps = 1;
+#endif
+}
+
 void input_init(void)
 {
 #ifdef SIMULATOR
@@ -130,9 +154,11 @@ enum action input_get(int timeout_ticks)
     switch (b) {
     case BUTTON_SCROLL_FWD:
     case BUTTON_SCROLL_FWD | BUTTON_REPEAT:
+        note_wheel();
         return A_DOWN;
     case BUTTON_SCROLL_BACK:
     case BUTTON_SCROLL_BACK | BUTTON_REPEAT:
+        note_wheel();
         return A_UP;
     case BUTTON_SELECT:
         return A_SELECT;

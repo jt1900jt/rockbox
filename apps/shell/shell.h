@@ -143,5 +143,8 @@ enum action {
 void input_init(void);
 enum action input_get(int timeout_ticks);
 bool input_pending(void);
+/* Rows (or steps) the last wheel event should move, from the driver's velocity.
+ * Always at least 1. */
+int input_wheel_steps(void);
 
 #endif

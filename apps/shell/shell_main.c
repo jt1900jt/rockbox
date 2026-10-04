@@ -48,19 +48,6 @@ static long seek_pos, seek_start;
 static bool volume_dirty;
 static long queued_tick; /* shows the "queued" confirmation briefly */
 
-/* Wheel acceleration: clicks arriving in quick succession move more than one step,
- * so a single sweep covers the range without losing fine control when turned slowly. */
-static int wheel_step(void)
-{
-    static long last_tick;
-    long gap = current_tick - last_tick;
-    last_tick = current_tick;
-    if (gap <= 1)
-        return 4;
-    if (gap <= 3)
-        return 2;
-    return 1;
-}
 
 static void mark_full(void)
 {
@@ -249,6 +236,30 @@ bool shell_np_info(struct np_info *np)
 /* The library is read-only, so what happened on the device goes into the journal for
  * the companion to merge. Watch for the track changing rather than hooking playback,
  * which keeps this out of the audio path. */
+/* Rockbox stores the resume point in global_status, but writes it when its own UI saves
+ * settings, which the shell never triggers. Keep it current here instead, throttled so a
+ * long listen does not mean constant writes to storage. */
+static void resume_poll(void)
+{
+    static long next_save;
+    struct mp3entry *id3 = audio_current_track();
+
+    if (!id3 || !(audio_status() & AUDIO_STATUS_PLAY))
+        return;
+    if (TIME_BEFORE(current_tick, next_save))
+        return;
+    next_save = current_tick + HZ * 15;
+
+    int index = -1;
+    if (playlist_get_resume_info(&index) < 0 || index < 0)
+        return;
+    global_status.resume_index = index;
+    global_status.resume_crc32 = playlist_get_filename_crc32(NULL, index);
+    global_status.resume_elapsed = (uint32_t)id3->elapsed;
+    global_status.resume_offset = (uint32_t)id3->offset;
+    status_save(false);
+}
+
 static void journal_poll(void)
 {
     struct mp3entry *id3 = audio_current_track();
@@ -728,6 +739,7 @@ static void handle(enum action a)
         if (a == A_UP || a == A_DOWN) {
             const struct home_item *items[HOME_ALL];
             int n = home_items(items);
+            (void)input_wheel_steps(); /* the home menu is short: one row per click */
             v->sel += a == A_DOWN ? 1 : -1;
             if (v->sel < 0)
                 v->sel = 0;
@@ -747,7 +759,9 @@ static void handle(enum action a)
             /* A full repaint per click (~26 ms on the 7G) is slower than the wheel
              * emits events, so clicks were being dropped and the volume crawled.
              * Repaint just the status bar and let a fast spin move several steps. */
-            int step = wheel_step();
+            int step = input_wheel_steps();
+            if (step > 8)
+                step = 8; /* volume has far fewer steps than a track list */
             adjust_volume(a == A_DOWN ? step : -step);
             volume_dirty = true;
             break;
@@ -818,8 +832,8 @@ static void handle(enum action a)
     }
 
     switch (a) {
-    case A_UP:   list_move(v, -1); break;
-    case A_DOWN: list_move(v, 1); break;
+    case A_UP:   list_move(v, -input_wheel_steps()); break;
+    case A_DOWN: list_move(v, input_wheel_steps()); break;
     case A_PREV: letter_jump(v, -1); break;
     case A_NEXT: letter_jump(v, 1); break;
     case A_RATE: /* centre held on a list: add to the queue, as stock On-The-Go did */
@@ -896,6 +910,7 @@ void shell_main(void)
             continue;
         }
         journal_poll();
+        resume_poll();
         if (art_take_dirty())
             mark_full(); /* art arrived: repaint so it appears */
         else if (a == A_TIMEOUT && (shell_show_clock() || shell_show_battery_pct()))
