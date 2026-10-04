@@ -32,6 +32,7 @@ int view_count(const struct view *v)
     case V_COMPOSERS:           return (int)db->n_composers;
     case V_PLAYLISTS:           return (int)db->n_playlists;
     case V_SETTINGS:            return shell_settings_count();
+    case V_COVERFLOW:           return (int)db->n_albums;
     case V_ALBUM_TRACKS:        return (int)db->albums[v->arg].tracks_count;
     case V_ARTIST_ALBUMS:       return (int)db->artists[v->arg].count;
     case V_ARTIST_ALBUM_TRACKS: return n_filtered;
@@ -172,6 +173,7 @@ const char *view_title(const struct view *v)
     case V_PLAYLIST_TRACKS:     return ipdb_str(db, db->playlists[v->arg].name);
     case V_NOW_PLAYING:         return "Now Playing";
     case V_SETTINGS:            return "Settings";
+    case V_COVERFLOW:           return "Albums";
     default:                    return "";
     }
 }
@@ -180,7 +182,8 @@ int view_jump_row(const struct view *v)
 {
     switch (v->kind) {
     case V_SONGS:     return IPDB_JUMP_SONGS;
-    case V_ALBUMS:    return IPDB_JUMP_ALBUMS;
+    case V_ALBUMS:
+    case V_COVERFLOW: return IPDB_JUMP_ALBUMS;
     case V_ARTISTS:   return IPDB_JUMP_ARTISTS;
     case V_GENRES:    return IPDB_JUMP_GENRES;
     case V_COMPOSERS: return IPDB_JUMP_COMPOSERS;
@@ -193,6 +196,7 @@ bool view_child(const struct view *v, int i, struct view *child)
     memset(child, 0, sizeof *child);
     switch (v->kind) {
     case V_ALBUMS:
+    case V_COVERFLOW:
         child->kind = V_ALBUM_TRACKS;
         child->arg = (uint32_t)i;
         return true;

@@ -18,6 +18,8 @@
 #include "screen_access.h"
 #include "settings.h"
 #include "sound.h"
+#include "backlight.h"
+#include "dsp_misc.h"
 #include "viewport.h"
 
 #include "shell.h"
@@ -44,7 +46,22 @@ static char overlay_letter;
 static bool need_full = true;
 static int drawn_sel = -1, drawn_top = -1;
 static bool seeking;
-static long seek_pos, seek_start;
+static long seek_offset; /* ms accumulated while a seek key is held */
+static long seek_step;
+
+/* Where a seek in progress would land. */
+static unsigned long seek_target(void)
+{
+    struct mp3entry *id3 = audio_current_track();
+    if (!id3)
+        return 0;
+    long t = (long)id3->elapsed + seek_offset;
+    if (t < 0)
+        t = 0;
+    if (t > (long)id3->length)
+        t = (long)id3->length;
+    return (unsigned long)t;
+}
 static bool volume_dirty;
 static long queued_tick; /* shows the "queued" confirmation briefly */
 
@@ -272,6 +289,8 @@ static void journal_poll(void)
             journal_track_finished(current_uid, last_elapsed, last_length);
         current_uid = uid;
         last_elapsed = last_length = 0;
+        seeking = false;
+        seek_offset = 0;
         current_rating = 0; /* ratings are per-track and come back from the companion */
     }
     /* Track the furthest point reached, not the latest sample: by the time a track
@@ -303,6 +322,7 @@ static const struct home_item home_all[] = {
     { "Playlists", V_PLAYLISTS, false, false, false },
     { "Artists", V_ARTISTS, false, false, false },
     { "Albums", V_ALBUMS, false, false, false },
+    { "Cover Flow", V_COVERFLOW, false, false, false },
     { "Songs", V_SONGS, false, false, false },
     { "Settings", V_SETTINGS, false, false, false },
 };
@@ -363,6 +383,8 @@ enum setting_id {
     SET_BATTERY_PCT,
     SET_SHUFFLE,
     SET_REPEAT,
+    SET_REPLAYGAIN,
+    SET_BACKLIGHT,
     SET_USB_LINK,
     SET_BENCHMARK,
     SET_ROCKBOX,
@@ -374,6 +396,8 @@ static const char *const setting_labels[SET_COUNT] = {
     [SET_CLOCK_FORMAT] = "Clock Format",
     [SET_BATTERY_PCT] = "Battery Percentage",
     [SET_SHUFFLE] = "Shuffle",
+    [SET_REPLAYGAIN] = "Volume Levelling",
+    [SET_BACKLIGHT] = "Backlight",
     [SET_REPEAT] = "Repeat",
     [SET_USB_LINK] = "USB Link",
     [SET_BENCHMARK] = "Benchmark",
@@ -497,6 +521,19 @@ const char *shell_settings_value(int row)
         return prefs.battery_pct ? "On" : "Off";
     case SET_SHUFFLE:
         return global_settings.playlist_shuffle ? "On" : "Off";
+    case SET_REPLAYGAIN: {
+        static const char *const rg[] = { "Track", "Album", "Smart", "Off" };
+        int t = global_settings.replaygain_settings.type;
+        return (t >= 0 && t < 4) ? rg[t] : "Off";
+    }
+    case SET_BACKLIGHT: {
+        static char buf[16];
+        int t = global_settings.backlight_timeout;
+        if (t <= 0)
+            return t < 0 ? "Always On" : "Off";
+        snprintf(buf, sizeof buf, "%d s", t);
+        return buf;
+    }
     case SET_REPEAT:
         return global_settings.repeat_mode < (int)(sizeof repeat_names / sizeof repeat_names[0])
                    ? repeat_names[global_settings.repeat_mode] : "Off";
@@ -524,6 +561,29 @@ static void settings_select(int row)
         global_settings.playlist_shuffle = !global_settings.playlist_shuffle;
         settings_save();
         break;
+    case SET_REPLAYGAIN: {
+        /* Track, Album, Smart (album unless shuffling), Off. */
+        int t = (global_settings.replaygain_settings.type + 1) % 4;
+        global_settings.replaygain_settings.type = t;
+        dsp_replaygain_set_settings(&global_settings.replaygain_settings);
+        settings_save();
+        break;
+    }
+    case SET_BACKLIGHT: {
+        /* A short cycle of the values people actually pick. */
+        static const int steps[] = { 5, 10, 30, 60, -1 };
+        int cur = global_settings.backlight_timeout, next = steps[0];
+        for (int i = 0; i < (int)(sizeof steps / sizeof steps[0]); i++) {
+            if (steps[i] == cur) {
+                next = steps[(i + 1) % (sizeof steps / sizeof steps[0])];
+                break;
+            }
+        }
+        global_settings.backlight_timeout = next;
+        backlight_set_timeout(next);
+        settings_save();
+        break;
+    }
     case SET_REPEAT:
         global_settings.repeat_mode = (global_settings.repeat_mode + 1) % NUM_REPEAT_MODES;
         audio_flush_and_reload_tracks();
@@ -548,7 +608,7 @@ static void settings_select(int row)
 
 static void list_clamp(struct view *v)
 {
-    int rows = draw_rows_visible();
+    int rows = v->kind == V_COVERFLOW ? 1 : draw_rows_visible();
     int n = view_count(v);
     if (v->sel >= n)
         v->sel = n - 1;
@@ -651,6 +711,15 @@ static void render(void)
             home_render();
             drawn_sel = v->sel;
             need_full = false;
+        }
+        break;
+
+    case V_COVERFLOW:
+        list_clamp(v);
+        if (need_full || v->sel != drawn_sel) {
+            draw_coverflow(v);
+            need_full = false;
+            drawn_sel = v->sel;
         }
         break;
 
@@ -776,34 +845,36 @@ static void handle(enum action a)
             break;
         case A_SEEK_BACK:
         case A_SEEK_FWD: {
-            /* Hold to seek, accelerating the longer the key is down. */
+            /* Accumulate an offset while the key is held and seek once on release.
+             * Seeking on every repeat makes the engine rebuffer each time, which is
+             * what made fast forward stutter and skip unevenly. */
             if (!id3 || !id3->length)
                 break;
             if (!seeking) {
                 seeking = true;
-                seek_pos = (long)id3->elapsed;
-                seek_start = current_tick;
+                seek_offset = 0;
+                seek_step = 1000; /* ms per repeat, grows while held */
                 audio_pre_ff_rewind();
             }
-            long held = current_tick - seek_start;
-            long step = 1000 + (held * 1000) / HZ * 2; /* 1s/tick, ramping up */
-            if (step > 15000)
-                step = 15000;
-            seek_pos += (a == A_SEEK_FWD) ? step : -step;
-            if (seek_pos < 0)
-                seek_pos = 0;
-            if (seek_pos > (long)id3->length)
-                seek_pos = (long)id3->length;
-            audio_ff_rewind(seek_pos);
+            long dir = (a == A_SEEK_FWD) ? 1 : -1;
+            /* Cap each step against the distance left, so the end of a track is
+             * approached smoothly instead of being overshot in one jump. */
+            long room = dir > 0 ? (long)id3->length - ((long)id3->elapsed + seek_offset)
+                                : (long)id3->elapsed + seek_offset;
+            long step = MIN(seek_step, MAX(room / 4, 1000));
+            seek_offset += step * dir;
+            if ((long)id3->elapsed + seek_offset < 0)
+                seek_offset = -(long)id3->elapsed;
+            if ((long)id3->elapsed + seek_offset > (long)id3->length)
+                seek_offset = (long)id3->length - (long)id3->elapsed;
+            seek_step += seek_step >> 2; /* 1.25x per repeat */
+            if (seek_step > 30000)
+                seek_step = 30000;
+            volume_dirty = false;
+            draw_now_playing_seek(seek_target());
+            gfx_flush();
             break;
         }
-        case A_SEEK_END:
-            if (seeking) {
-                seeking = false;
-                audio_resume();
-                mark_full();
-            }
-            break;
         case A_RATE: {
             if (current_uid == IPDB_NONE)
                 break;

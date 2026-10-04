@@ -350,6 +350,97 @@ void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint1
     }
 }
 
+/* ---- cover flow ---- */
+
+/* Covers are drawn flat at three sizes rather than with a perspective transform: a real
+ * 3D projection needs per-pixel sampling of every side cover, and a full-screen push is
+ * already 25 ms on this hardware. Scaling plus dimming reads as depth at this size.
+ */
+#define CF_CENTER   116
+#define CF_SIDE     74
+#define CF_FAR      52
+#define CF_ART_Y    40
+
+static void cf_cover(const uint16_t *src, int sw, int x, int y, int size, uint8_t dim)
+{
+    if (!src) {
+        gfx_fill_round(x, y, size, size, 3, C_PLACEHOLD);
+        return;
+    }
+    if (size == sw)
+        gfx_blit_round(src, x, y, size, size, 3);
+    else
+        gfx_blit_scaled(src, sw, sw, x, y, size, size);
+    if (dim)
+        gfx_scrim(x, y, size, size, dim);
+}
+
+/* Art for an album, if resident; queues a load otherwise. */
+static const uint16_t *cf_art(const struct view *v, int index, int *w)
+{
+    int count = view_count(v);
+    if (index < 0 || index >= count)
+        return NULL;
+    const ipdb_album *al = ipdb_album_at(&shell_db, (uint32_t)index);
+    int h;
+    const uint16_t *px = art_get(IPAP_LRGE, al->art_id, w, &h);
+    return (px && *w == h) ? px : NULL;
+}
+
+void draw_coverflow(const struct view *v)
+{
+    int count = view_count(v);
+    gfx_fill(0, 0, LCD_WIDTH, LCD_HEIGHT, C_BG);
+
+    if (count == 0) {
+        draw_status("Albums", true);
+        gfx_text_center(F_BODY, LCD_WIDTH / 2, LCD_HEIGHT / 2, 280, "No albums", C_SUB);
+        return;
+    }
+
+    const ipdb_album *cur = ipdb_album_at(&shell_db, (uint32_t)v->sel);
+    /* Wash in the current album's colour, so the background follows the selection. */
+    if (cur->colors[0]) {
+        gfx_wash(0, 0, LCD_WIDTH, LCD_HEIGHT, LCD_WIDTH / 2, CF_ART_Y + CF_CENTER / 2,
+                 220, cur->colors[0], C_BG);
+        gfx_scrim(0, 0, LCD_WIDTH, LCD_HEIGHT, 130);
+    }
+    draw_status("Albums", true);
+
+    const int cx = LCD_WIDTH / 2;
+    int w;
+    /* Far, then side, then centre: nearer covers overlap the ones behind them. */
+    const uint16_t *px = cf_art(v, v->sel - 2, &w);
+    cf_cover(px, w, cx - CF_CENTER / 2 - CF_SIDE - 28, CF_ART_Y + 40, CF_FAR, 150);
+    px = cf_art(v, v->sel + 2, &w);
+    cf_cover(px, w, cx + CF_CENTER / 2 + CF_SIDE + 28 - CF_FAR, CF_ART_Y + 40, CF_FAR, 150);
+
+    px = cf_art(v, v->sel - 1, &w);
+    cf_cover(px, w, cx - CF_CENTER / 2 - CF_SIDE + 12, CF_ART_Y + 22, CF_SIDE, 90);
+    px = cf_art(v, v->sel + 1, &w);
+    cf_cover(px, w, cx + CF_CENTER / 2 - 12, CF_ART_Y + 22, CF_SIDE, 90);
+
+    px = cf_art(v, v->sel, &w);
+    cf_cover(px, w, cx - CF_CENTER / 2, CF_ART_Y, CF_CENTER, 0);
+
+    /* Title and artist below the stack. */
+    int ty = CF_ART_Y + CF_CENTER + 18;
+    gfx_text_center(F_TITLE, cx, ty, LCD_WIDTH - 2 * SIDE, ipdb_str(&shell_db, cur->title), C_FG);
+    const ipdb_group *ar = &shell_db.artists[cur->artist_id];
+    gfx_text_center(F_BODY, cx, ty + 20, LCD_WIDTH - 2 * SIDE, ipdb_str(&shell_db, ar->name), C_SUB);
+
+    char pos[24];
+    snprintf(pos, sizeof pos, "%d of %d", v->sel + 1, count);
+    gfx_text_center(F_CAPS, cx, LCD_HEIGHT - 10, 200, pos, C_DIM);
+
+    /* Pull in the covers either side so a turn of the wheel finds them loaded. */
+    for (int d = -3; d <= 3; d++) {
+        int i = v->sel + d;
+        if (i >= 0 && i < count)
+            art_prefetch(IPAP_LRGE, ipdb_album_at(&shell_db, (uint32_t)i)->art_id);
+    }
+}
+
 /* ---- now playing ---- */
 
 void format_duration(char *buf, int len, uint32_t ms)
@@ -399,10 +490,27 @@ void draw_rating_overlay(const struct np_info *np)
 static uint16_t prog_bg[PROG_W * PROG_H];
 static bool prog_bg_valid;
 
+/* While a seek is held the bar shows where it would land, not where playback is. */
+static bool seek_preview;
+static unsigned long seek_preview_ms;
+static void draw_progress(const struct mp3entry *id3);
+
+void draw_now_playing_seek(unsigned long target_ms)
+{
+    struct mp3entry *id3 = audio_current_track();
+    if (!id3)
+        return;
+    seek_preview = true;
+    seek_preview_ms = target_ms;
+    draw_progress(id3);
+    seek_preview = false;
+}
+
 static void draw_progress(const struct mp3entry *id3)
 {
     char buf[32], buf2[16];
-    unsigned long len = id3->length, el = id3->elapsed;
+    unsigned long len = id3->length;
+    unsigned long el = seek_preview ? seek_preview_ms : id3->elapsed;
 
     if (prog_bg_valid)
         gfx_blit(prog_bg, PROG_X, BAR_Y, PROG_W, PROG_H);
