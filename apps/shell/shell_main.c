@@ -777,6 +777,7 @@ static void handle(enum action a)
             if (seeking) {
                 seeking = false;
                 audio_resume();
+                mark_full();
             }
             break;
         case A_RATE: {

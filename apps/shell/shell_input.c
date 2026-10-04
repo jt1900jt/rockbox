@@ -93,6 +93,10 @@ static enum action script_next(void)
 }
 #endif
 
+/* Tracks whether the current left/right press turned into a hold. */
+static int seek_dir;
+static bool seek_repeated;
+
 void input_init(void)
 {
 #ifdef SIMULATOR
@@ -140,18 +144,33 @@ enum action input_get(int timeout_ticks)
         return A_HOME;
     case BUTTON_PLAY:
         return A_PLAY;
+    /* Skip or seek is decided on release: acting on the press would skip the track the
+     * instant the key goes down, before any repeat could arrive, so holding to seek
+     * always jumped to the next track first. */
     case BUTTON_LEFT:
-        return A_PREV;
+        seek_dir = -1;
+        seek_repeated = false;
+        return A_NONE;
     case BUTTON_RIGHT:
-        return A_NEXT;
-    /* Held: seek while the key is down, as on the stock firmware. */
+        seek_dir = 1;
+        seek_repeated = false;
+        return A_NONE;
     case BUTTON_LEFT | BUTTON_REPEAT:
+        seek_repeated = true;
         return A_SEEK_BACK;
     case BUTTON_RIGHT | BUTTON_REPEAT:
+        seek_repeated = true;
         return A_SEEK_FWD;
     case BUTTON_LEFT | BUTTON_REL:
-    case BUTTON_RIGHT | BUTTON_REL:
-        return A_SEEK_END;
+    case BUTTON_RIGHT | BUTTON_REL: {
+        int dir = seek_dir;
+        bool held = seek_repeated;
+        seek_dir = 0;
+        seek_repeated = false;
+        if (held)
+            return A_SEEK_END;
+        return dir < 0 ? A_PREV : A_NEXT;
+    }
     default:
         break;
     }
