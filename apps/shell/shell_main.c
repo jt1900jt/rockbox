@@ -63,6 +63,15 @@ static unsigned long seek_target(void)
     return (unsigned long)t;
 }
 static bool volume_dirty;
+
+/* Cover Flow slide. The stack centre moves from where it was toward the selection over
+ * a fixed number of ticks; `cf_from_fp` is in the same 1/256ths of a cover position the
+ * drawing code uses. */
+#define CF_FP_UNIT  256
+#define CF_SLIDE_TICKS (HZ / 8)
+static int cf_from_fp;
+static long cf_slide_start;
+static bool cf_sliding;
 static long queued_tick; /* shows the "queued" confirmation briefly */
 
 
@@ -179,6 +188,7 @@ static void pop(void)
     if (depth > 1)
         depth--;
     art_cancel_pending();
+    cf_sliding = false;
     mark_full();
 }
 
@@ -714,14 +724,39 @@ static void render(void)
         }
         break;
 
-    case V_COVERFLOW:
+    case V_COVERFLOW: {
         list_clamp(v);
-        if (need_full || v->sel != drawn_sel) {
-            draw_coverflow(v, need_full);
+        int target_fp = v->sel * CF_FP_UNIT;
+
+        if (v->sel != drawn_sel && drawn_sel >= 0 && !need_full) {
+            /* Start sliding from wherever the stack currently is, so turning the wheel
+             * again mid-slide continues from there rather than snapping back. */
+            cf_from_fp = cf_sliding ? draw_cf_fp() : drawn_sel * CF_FP_UNIT;
+            cf_slide_start = current_tick;
+            cf_sliding = true;
+        }
+
+        int centre_fp = target_fp;
+        if (cf_sliding) {
+            long elapsed = current_tick - cf_slide_start;
+            if (elapsed >= CF_SLIDE_TICKS) {
+                cf_sliding = false;
+            } else {
+                /* Ease out: most of the distance is covered early, which reads as
+                 * momentum rather than a constant glide. */
+                int t = (int)(elapsed * 256 / CF_SLIDE_TICKS);
+                int eased = 256 - ((256 - t) * (256 - t)) / 256;
+                centre_fp = cf_from_fp + (int)((long long)(target_fp - cf_from_fp) * eased / 256);
+            }
+        }
+
+        if (need_full || cf_sliding || v->sel != drawn_sel) {
+            draw_coverflow(v, need_full, centre_fp);
             need_full = false;
             drawn_sel = v->sel;
         }
         break;
+    }
 
     case V_NOW_PLAYING: {
         struct np_info np;
@@ -770,6 +805,8 @@ static void render(void)
 
 static int timeout_for(const struct view *v)
 {
+    if (v->kind == V_COVERFLOW && cf_sliding)
+        return 0; /* mid-slide: draw the next frame rather than waiting for input */
     if (v->kind == V_NOW_PLAYING)
         return HZ / 2;
     if (overlay_letter)

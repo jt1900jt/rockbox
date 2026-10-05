@@ -90,7 +90,11 @@ void draw_status_invalidate(void);
 void draw_home(int sel, const char *const *labels, int n, uint32_t art_id, uint16_t swatch);
 void draw_list(const struct view *v, bool full);
 void draw_list_rows(const struct view *v, int old_sel, int new_sel);
-void draw_coverflow(const struct view *v, bool full);
+/* Cover Flow. `centre_fp` is the stack centre in 1/256ths of a cover position, so a
+ * slide can be drawn part-way; CF_ANIM_REST means "centred on the selection". */
+#define CF_ANIM_REST INT32_MIN
+void draw_coverflow(const struct view *v, bool full, int centre_fp);
+int draw_cf_fp(void);
 void draw_list_header(const struct view *v, const char *title, const char *sub,
                       uint32_t art_id, uint16_t swatch);
 void draw_now_playing(const struct np_info *np, bool full);

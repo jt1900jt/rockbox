@@ -390,12 +390,65 @@ static const uint16_t *cf_art(const struct view *v, int index, uint32_t cls, int
     return (px && *w == h) ? px : NULL;
 }
 
+/* Where a cover sits, given its distance from the centre of the stack. `d` is in cover
+ * positions and is fractional while sliding, so the resting layout and every frame of
+ * the animation come from the same formula.
+ *
+ * Fixed point: offsets are in 1/256ths of a position, which keeps the integer maths
+ * exact enough that covers do not jitter between frames. */
+#define CF_FP 256
 #define CF_STRIP_Y  (CF_ART_Y - 2)
 #define CF_STRIP_H  (CF_CENTER + 46)
 
-void draw_coverflow(const struct view *v, bool full)
+static void cf_place(int d_fp, int *x, int *y, int *size, int *dim)
+{
+    int ad = d_fp < 0 ? -d_fp : d_fp;
+    if (ad > 3 * CF_FP)
+        ad = 3 * CF_FP;
+
+    /* Size falls from centre to side across the first position, then to far across the
+     * second, and stays there. */
+    if (ad <= CF_FP)
+        *size = CF_CENTER - (CF_CENTER - CF_SIDE) * ad / CF_FP;
+    else if (ad <= 2 * CF_FP)
+        *size = CF_SIDE - (CF_SIDE - CF_FAR) * (ad - CF_FP) / CF_FP;
+    else
+        *size = CF_FAR;
+
+    *dim = ad <= CF_FP ? 90 * ad / CF_FP : 90 + 60 * (ad - CF_FP) / (2 * CF_FP);
+    if (*dim > 150)
+        *dim = 150;
+
+    /* Spacing tightens with distance, which is what gives the stack its crowded edges. */
+    int step = CF_CENTER / 2 + 12;
+    int far_step = CF_SIDE / 2 + 10;
+    int off;
+    if (ad <= CF_FP)
+        off = step * ad / CF_FP;
+    else
+        off = step + far_step * (ad - CF_FP) / CF_FP;
+    if (d_fp < 0)
+        off = -off;
+
+    *x = LCD_WIDTH / 2 + off - *size / 2;
+    *y = CF_ART_Y + (CF_CENTER - *size) / 2;
+}
+
+/* Where the stack was last drawn, so a slide interrupted by another turn of the wheel
+ * continues from the current position. */
+static int cf_last_fp;
+
+int draw_cf_fp(void)
+{
+    return cf_last_fp;
+}
+
+void draw_coverflow(const struct view *v, bool full, int centre_fp)
 {
     int count = view_count(v);
+    if (centre_fp == CF_ANIM_REST)
+        centre_fp = v->sel * CF_FP;
+    cf_last_fp = centre_fp;
     const ipdb_album *sel_album = count ? ipdb_album_at(&shell_db, (uint32_t)v->sel) : NULL;
 
     /* Moving the selection only changes the covers and the labels. Repainting the whole
@@ -429,26 +482,30 @@ void draw_coverflow(const struct view *v, bool full)
         draw_status("Albums", true);
     }
 
-    const int cx = LCD_WIDTH / 2;
-    int w;
-    /* Far, then side, then centre: nearer covers overlap the ones behind them. The side
-     * covers come pre-rendered at 74 px, so the common case is a straight copy; the far
-     * ones are scaled from that, which is a quarter of the pixels of scaling from 116. */
-    const uint16_t *px = cf_art(v, v->sel - 2, IPAP_SIDE, &w);
-    cf_cover(px, w, cx - CF_CENTER / 2 - CF_SIDE - 28, CF_ART_Y + 40, CF_FAR, 150);
-    px = cf_art(v, v->sel + 2, IPAP_SIDE, &w);
-    cf_cover(px, w, cx + CF_CENTER / 2 + CF_SIDE + 28 - CF_FAR, CF_ART_Y + 40, CF_FAR, 150);
-
-    px = cf_art(v, v->sel - 1, IPAP_SIDE, &w);
-    cf_cover(px, w, cx - CF_CENTER / 2 - CF_SIDE + 12, CF_ART_Y + 22, CF_SIDE, 90);
-    px = cf_art(v, v->sel + 1, IPAP_SIDE, &w);
-    cf_cover(px, w, cx + CF_CENTER / 2 - 12, CF_ART_Y + 22, CF_SIDE, 90);
-
-    px = cf_art(v, v->sel, IPAP_LRGE, &w);
-    cf_cover(px, w, cx - CF_CENTER / 2, CF_ART_Y, CF_CENTER, 0);
+    /* Draw from the outside in, so nearer covers overlap the ones behind them. The
+     * centre position is fractional while sliding; everything else follows from it. */
+    for (int pass = 3; pass >= 0; pass--) {
+        for (int side = 0; side < 2; side++) {
+            if (pass == 0 && side)
+                continue; /* the centre is a single cover */
+            int idx = v->sel + (side ? pass : -pass);
+            if (idx < 0 || idx >= count)
+                continue;
+            int d_fp = idx * CF_FP - centre_fp;
+            int x, y, size, dim, w;
+            cf_place(d_fp, &x, &y, &size, &dim);
+            if (x + size < 0 || x >= LCD_WIDTH)
+                continue;
+            /* The full-size cover is only worth fetching for the one at the centre. */
+            uint32_t cls = (size > CF_SIDE + 8) ? IPAP_LRGE : IPAP_SIDE;
+            const uint16_t *px = cf_art(v, idx, cls, &w);
+            cf_cover(px, w, x, y, size, (uint8_t)dim);
+        }
+    }
 
     /* Title and artist below the stack. */
     int ty = CF_ART_Y + CF_CENTER + 18;
+    const int cx = LCD_WIDTH / 2;
     gfx_text_center(F_TITLE, cx, ty, LCD_WIDTH - 2 * SIDE, ipdb_str(&shell_db, cur->title), C_FG);
     const ipdb_group *ar = &shell_db.artists[cur->artist_id];
     gfx_text_center(F_BODY, cx, ty + 20, LCD_WIDTH - 2 * SIDE, ipdb_str(&shell_db, ar->name), C_SUB);
