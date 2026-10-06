@@ -126,6 +126,11 @@ bool shell_show_volume(void);
 bool shell_status_volume(void);
 int shell_volume_percent(void);
 
+/* shell_boot.c: the animation shown while the library loads. */
+void boot_begin(void);
+void boot_progress(int pct);
+void boot_end(void);
+
 /* shell_bench.c */
 extern long shell_boot_tick;
 bool shell_bench_available(void);

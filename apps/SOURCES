@@ -29,6 +29,7 @@ shell/shell_bench.c
 shell/shell_link.c
 shell/shell_journal.c
 shell/shell_sync.c
+shell/shell_boot.c
 shell/link_proto.c
 #endif
 menu.c

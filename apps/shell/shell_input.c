@@ -18,6 +18,15 @@ static const char *script;
 static const char *script_pos;
 
 /* 24-bit BMP of the current framebuffer to /shots/<name>.bmp (simdisk). */
+static void shot(const char *name, size_t len);
+
+/* Lets the boot animation capture frames, which the script cannot: the script only runs
+ * once the shell is up. */
+void shell_shot(const char *name)
+{
+    shot(name, strlen(name));
+}
+
 static void shot(const char *name, size_t len)
 {
     char path[96];

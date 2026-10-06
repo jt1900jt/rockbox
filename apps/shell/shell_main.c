@@ -141,7 +141,19 @@ static int db_load(void)
     }
     core_pin(h);
     void *buf = core_get_data(h);
-    ssize_t got = read(fd, buf, (size_t)size);
+    /* Read in chunks so the boot bar advances with the read, which is a third of the
+     * load on a large library. */
+    ssize_t got = 0;
+    while (got < size) {
+        size_t chunk = (size_t)(size - got);
+        if (chunk > 512 * 1024)
+            chunk = 512 * 1024;
+        ssize_t n = read(fd, (char *)buf + got, chunk);
+        if (n <= 0)
+            break;
+        got += n;
+        boot_progress((int)(got * 35 / size));
+    }
     close(fd);
     if (got != size) {
         core_free(h);
@@ -153,6 +165,8 @@ static int db_load(void)
         .crc = ipdb_peek_crc(buf, (size_t)size),
     };
     bool skip_crc = st.generation != 0 && stamp_matches(&st);
+    /* The checksum dominates what is left when it runs at all. */
+    boot_progress(skip_crc ? 70 : 40);
 
     int err = ipdb_open_ex(&shell_db, buf, (size_t)size, skip_crc);
     if (err != IPDB_OK) {
@@ -1046,14 +1060,18 @@ void shell_main(void)
         root_menu();
     }
 
+    boot_begin();
+
     int err = db_load();
     if (err != 0) {
+        boot_end();
         draw_message("No library found",
                      err < 0 ? "Sync from the companion to " SHELL_DIR : ipdb_strerror(err));
         gfx_flush();
         sleep(HZ * 3);
         enter_rockbox_ui();
     }
+    boot_progress(80);
     art_init(shell_db.generation);
     journal_init();
 
@@ -1064,6 +1082,8 @@ void shell_main(void)
                                   global_status.resume_elapsed, global_status.resume_offset);
         }
     }
+
+    boot_end();
 
     reset_to_home();
     for (;;) {
