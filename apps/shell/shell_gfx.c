@@ -540,6 +540,9 @@ int gfx_baseline_in(enum gfx_face face, int y, int h)
     return y + (h - cap) / 2 + f->ascent;
 }
 
+/* A solid rounded block filled to the charge level, with the reading printed inside.
+ * An outline plus a fill plus a number is three competing shapes in 27x14; the block
+ * alone carries the level, and the digits sit on it. */
 void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color)
 {
     const int w = GFX_BATTERY_W - 3, h = GFX_BATTERY_H;
@@ -548,37 +551,29 @@ void gfx_icon_battery(int x, int y, int percent, bool charging, uint16_t color)
     if (percent < 0) percent = 0;
     if (percent > 100) percent = 100;
 
-    /* cell outline plus the terminal nub */
-    gfx_hline(x + 2, y, w - 4, color);
-    gfx_hline(x + 2, y + h - 1, w - 4, color);
-    gfx_vline(x, y + 2, h - 4, color);
-    gfx_vline(x + w - 1, y + 2, h - 4, color);
-    gfx_fill(x + 1, y + 1, 1, 1, color);
-    gfx_fill(x + w - 2, y + 1, 1, 1, color);
-    gfx_fill(x + 1, y + h - 2, 1, 1, color);
-    gfx_fill(x + w - 2, y + h - 2, 1, 1, color);
-    gfx_fill(x + w + 1, y + 5, 2, h - 10, color);
-
-    /* The charge level fills from the left; the reading sits on top, flipping to the
-     * background colour over the filled part so it stays legible either way. */
-    int fill = (w - 4) * percent / 100;
-    if (fill > 0)
-        gfx_fill(x + 2, y + 2, fill, h - 4, color);
+    /* Unfilled part in a muted tone, filled part solid, so the level reads at a glance
+     * without an outline to contain it. */
+    gfx_fill_round(x, y, w, h, 3, C_OFF);
+    int fill = w * percent / 100;
+    if (fill > 2)
+        gfx_fill_round(x, y, fill, h, 3, color);
+    gfx_fill(x + w, y + 4, 2, h - 8, C_OFF); /* terminal nub */
 
     snprintf(buf, sizeof buf, "%d", percent);
     int tw = gfx_width(F_CAPS, buf);
     int tx = x + (w - tw) / 2;
-    int ty = y + (h + gfx_ascent(F_CAPS)) / 2 - 1;
-    /* draw twice, clipped to the filled and unfilled halves */
-    int split = x + 2 + fill;
-    gfx_clip(x + 1, y + 1, split - (x + 1), h - 2);
+    int ty = gfx_baseline_in(F_CAPS, y, h);
+    /* Drawn twice, clipped either side of the fill edge, so the digits stay legible
+     * whether they sit on the filled or the empty part. */
+    int split = x + fill;
+    gfx_clip(x, y, split - x, h);
     gfx_text(F_CAPS, tx, ty, buf, C_BG);
-    gfx_clip(split, y + 1, (x + w - 1) - split, h - 2);
-    gfx_text(F_CAPS, tx, ty, buf, color);
+    gfx_clip(split, y, (x + w) - split, h);
+    gfx_text(F_CAPS, tx, ty, buf, C_FG);
     gfx_clip_reset();
 
     if (charging)
-        gfx_fill(x + w + 1, y + 5, 2, h - 10, C_FG);
+        gfx_fill(x + w, y + 4, 2, h - 8, C_FG);
 }
 
 void gfx_icon_speaker(int x, int y, uint16_t color)

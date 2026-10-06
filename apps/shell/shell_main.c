@@ -393,9 +393,8 @@ static void home_select(void)
 /* ---- settings ---- */
 
 enum setting_id {
-    SET_CLOCK,
-    SET_CLOCK_FORMAT,
-    SET_BATTERY_PCT,
+    /* main */
+    SET_STATUS_BAR,
     SET_SHUFFLE,
     SET_REPEAT,
     SET_REPLAYGAIN,
@@ -403,13 +402,34 @@ enum setting_id {
     SET_USB_LINK,
     SET_BENCHMARK,
     SET_ROCKBOX,
+    /* status bar */
+    SET_CLOCK,
+    SET_CLOCK_FORMAT,
+    SET_BATTERY_PCT,
+    SET_VOLUME_BAR,
     SET_COUNT
 };
 
+/* Which group each setting belongs to, so one table drives both screens. */
+static enum setting_group setting_group_of(int id)
+{
+    switch (id) {
+    case SET_CLOCK:
+    case SET_CLOCK_FORMAT:
+    case SET_BATTERY_PCT:
+    case SET_VOLUME_BAR:
+        return SETGROUP_STATUS;
+    default:
+        return SETGROUP_MAIN;
+    }
+}
+
 static const char *const setting_labels[SET_COUNT] = {
-    [SET_CLOCK] = "Clock in Status Bar",
+    [SET_STATUS_BAR] = "Status Bar",
+    [SET_CLOCK] = "Clock",
     [SET_CLOCK_FORMAT] = "Clock Format",
-    [SET_BATTERY_PCT] = "Battery Percentage",
+    [SET_BATTERY_PCT] = "Battery",
+    [SET_VOLUME_BAR] = "Volume",
     [SET_SHUFFLE] = "Shuffle",
     [SET_REPLAYGAIN] = "Volume Levelling",
     [SET_BACKLIGHT] = "Backlight",
@@ -425,12 +445,13 @@ struct shell_prefs {
     uint32_t magic;
     uint8_t clock;
     uint8_t battery_pct;
-    uint8_t reserved[2];
+    uint8_t volume;   /* volume readout in the status bar */
+    uint8_t reserved;
 };
 #define PREFS_MAGIC 0x50534F49 /* "IOSP" */
 #define PREFS_PATH SHELL_DIR "/prefs.bin"
 
-static struct shell_prefs prefs = { PREFS_MAGIC, 1, 1, { 0, 0 } };
+static struct shell_prefs prefs = { PREFS_MAGIC, 1, 1, 1, 0 };
 
 static void prefs_load(void)
 {
@@ -463,9 +484,14 @@ bool shell_show_battery_pct(void)
     return prefs.battery_pct != 0;
 }
 
+bool shell_show_volume(void)
+{
+    return prefs.volume != 0;
+}
+
 bool shell_status_volume(void)
 {
-    return depth > 0 && stack[depth - 1].kind == V_NOW_PLAYING;
+    return prefs.volume && depth > 0 && stack[depth - 1].kind == V_NOW_PLAYING;
 }
 
 /* The hardware range is about 80 steps; report it as 0-100 so a full sweep of the
@@ -497,10 +523,10 @@ static bool setting_visible(int id)
     return true;
 }
 
-static int setting_at(int row)
+static int setting_at(uint32_t group, int row)
 {
     for (int i = 0; i < SET_COUNT; i++) {
-        if (!setting_visible(i))
+        if (setting_group_of(i) != (enum setting_group)group || !setting_visible(i))
             continue;
         if (row-- == 0)
             return i;
@@ -508,25 +534,30 @@ static int setting_at(int row)
     return -1;
 }
 
-int shell_settings_count(void)
+int shell_settings_count(uint32_t group)
 {
     int n = 0;
     for (int i = 0; i < SET_COUNT; i++)
-        if (setting_visible(i))
+        if (setting_group_of(i) == (enum setting_group)group && setting_visible(i))
             n++;
     return n;
 }
 
-const char *shell_settings_label(int row)
+const char *shell_settings_title(uint32_t group)
 {
-    int id = setting_at(row);
+    return group == SETGROUP_STATUS ? "Status Bar" : "Settings";
+}
+
+const char *shell_settings_label(uint32_t group, int row)
+{
+    int id = setting_at(group, row);
     return id >= 0 ? setting_labels[id] : "";
 }
 
-const char *shell_settings_value(int row)
+const char *shell_settings_value(uint32_t group, int row)
 {
     static const char *const repeat_names[] = { "Off", "All", "One", "Shuffle", "A-B" };
-    int id = setting_at(row);
+    int id = setting_at(group, row);
     switch (id) {
     case SET_CLOCK:
         return prefs.clock ? "On" : "Off";
@@ -534,6 +565,8 @@ const char *shell_settings_value(int row)
         return global_settings.timeformat ? "12 Hour" : "24 Hour";
     case SET_BATTERY_PCT:
         return prefs.battery_pct ? "On" : "Off";
+    case SET_VOLUME_BAR:
+        return prefs.volume ? "On" : "Off";
     case SET_SHUFFLE:
         return global_settings.playlist_shuffle ? "On" : "Off";
     case SET_REPLAYGAIN: {
@@ -542,10 +575,14 @@ const char *shell_settings_value(int row)
         return (t >= 0 && t < 4) ? rg[t] : "Off";
     }
     case SET_BACKLIGHT: {
+        /* Rockbox uses 0 for always on and -1 for never, which is the opposite of what
+         * the names suggest; mapping them the other way turned the backlight off. */
         static char buf[16];
         int t = global_settings.backlight_timeout;
-        if (t <= 0)
-            return t < 0 ? "Always On" : "Off";
+        if (t == 0)
+            return "Always On";
+        if (t < 0)
+            return "Off";
         snprintf(buf, sizeof buf, "%d s", t);
         return buf;
     }
@@ -557,9 +594,18 @@ const char *shell_settings_value(int row)
     }
 }
 
-static void settings_select(int row)
+static void settings_select(struct view *v, int row)
 {
-    switch (setting_at(row)) {
+    switch (setting_at(v->arg, row)) {
+    case SET_STATUS_BAR: {
+        struct view child = { .kind = V_SETTINGS, .arg = SETGROUP_STATUS, .sel = 0, .top = 0 };
+        push(&child);
+        return;
+    }
+    case SET_VOLUME_BAR:
+        prefs.volume = !prefs.volume;
+        prefs_save();
+        break;
     case SET_CLOCK:
         prefs.clock = !prefs.clock;
         prefs_save();
@@ -586,7 +632,7 @@ static void settings_select(int row)
     }
     case SET_BACKLIGHT: {
         /* A short cycle of the values people actually pick. */
-        static const int steps[] = { 5, 10, 30, 60, -1 };
+        static const int steps[] = { 5, 10, 30, 60, 0 };
         int cur = global_settings.backlight_timeout, next = steps[0];
         for (int i = 0; i < (int)(sizeof steps / sizeof steps[0]); i++) {
             if (steps[i] == cur) {
@@ -969,7 +1015,7 @@ static void handle(enum action a)
         if (view_count(v) == 0)
             break;
         if (v->kind == V_SETTINGS) {
-            settings_select(v->sel);
+            settings_select(v, v->sel);
             break;
         }
         struct view child;

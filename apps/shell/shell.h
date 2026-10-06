@@ -109,15 +109,22 @@ void format_duration(char *buf, int len, uint32_t ms);
 /* Fills np from the library for the track currently playing. */
 bool shell_np_info(struct np_info *np);
 
-/* Settings list, defined in shell_main.c and rendered through the normal list views. */
-int shell_settings_count(void);
+/* Settings list, defined in shell_main.c and rendered through the normal list views.
+ * Settings are grouped; the view's arg selects which group it shows. */
+enum setting_group {
+    SETGROUP_MAIN = 0,
+    SETGROUP_STATUS = 1,
+};
+int shell_settings_count(uint32_t group);
+const char *shell_settings_label(uint32_t group, int i);
+const char *shell_settings_value(uint32_t group, int i);
+const char *shell_settings_title(uint32_t group);
 bool shell_show_clock(void);
 bool shell_show_battery_pct(void);
+bool shell_show_volume(void);
 /* True while the wheel adjusts volume, i.e. on Now Playing. */
 bool shell_status_volume(void);
 int shell_volume_percent(void);
-const char *shell_settings_label(int i);
-const char *shell_settings_value(int i);
 
 /* shell_bench.c */
 extern long shell_boot_tick;
