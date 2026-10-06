@@ -204,9 +204,14 @@ static void draw_scrollbar(int count, int top)
     gfx_fill_round(x, ty, SCROLL_W, th, 1, C_SUB);
 }
 
-/* Queue the art just outside the viewport so scrolling finds it already resident. */
+/* Queue the art just outside the viewport so scrolling finds it already resident.
+ * Skipped while the wheel is still turning: those rows are about to scroll away, and
+ * the loader competes with playback for the same storage. */
 static void prefetch_around(const struct view *v, int top, int count)
 {
+    if (input_pending())
+        return;
+
     int rows = rows_visible();
     for (int k = -2; k < rows + 2; k++) {
         int i = top + k;

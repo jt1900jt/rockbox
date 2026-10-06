@@ -275,7 +275,12 @@ static void resume_poll(void)
         return;
     if (TIME_BEFORE(current_tick, next_save))
         return;
-    next_save = current_tick + HZ * 15;
+    /* Writing settings flushes to storage, which stalls this thread. Never do it with
+     * input waiting, and keep the interval long: losing half a minute of position after
+     * a crash costs nothing, a stutter while scrolling is felt immediately. */
+    if (input_pending() || seeking)
+        return;
+    next_save = current_tick + HZ * 60;
 
     int index = -1;
     if (playlist_get_resume_info(&index) < 0 || index < 0)
@@ -761,6 +766,13 @@ static void render(void)
     case V_NOW_PLAYING: {
         struct np_info np;
         shell_np_info(&np);
+        if (seeking) {
+            /* Checked before the full-redraw flag: the status bar refresh sets that flag
+             * twice a second, and a full redraw paints the real elapsed time, which is
+             * what made the bar look frozen while the key was held. */
+            draw_now_playing_seek(seek_target());
+            break;
+        }
         if (!need_full && volume_dirty) {
             draw_status(view_title(v), true);
             volume_dirty = false;
@@ -807,6 +819,8 @@ static int timeout_for(const struct view *v)
 {
     if (v->kind == V_COVERFLOW && cf_sliding)
         return 0; /* mid-slide: draw the next frame rather than waiting for input */
+    if (v->kind == V_NOW_PLAYING && seeking)
+        return HZ / 16;
     if (v->kind == V_NOW_PLAYING)
         return HZ / 2;
     if (overlay_letter)
@@ -908,8 +922,6 @@ static void handle(enum action a)
             if (seek_step > 30000)
                 seek_step = 30000;
             volume_dirty = false;
-            draw_now_playing_seek(seek_target());
-            gfx_flush();
             break;
         }
         case A_RATE: {
@@ -1019,8 +1031,10 @@ void shell_main(void)
         }
         journal_poll();
         resume_poll();
-        if (art_take_dirty())
-            mark_full(); /* art arrived: repaint so it appears */
+        /* Art arriving means a repaint, but not while the wheel is still turning: the
+         * rows it loaded for are about to scroll away anyway. */
+        if (art_take_dirty() && !input_pending())
+            mark_full();
         else if (a == A_TIMEOUT && (shell_show_clock() || shell_show_battery_pct()))
             mark_full(); /* keep the status bar readouts current */
         handle(a);
